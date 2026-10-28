@@ -1,0 +1,15 @@
+# agentic-comments
+
+Comment threads and suggestions anchored to any content, from people and agents.
+
+Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs,mcp.
+
+- SDK: import { summarizeText, dispatchText } from "agentic-comments".
+- CLI: agentic-comments summary --text "...".
+- MCP: run agentic-comments mcp, then call summarize_text.
+
+## Docs
+
+- README: https://github.com/pooriaarab/agentic-comments
+- Core contract: https://github.com/pooriaarab/agentic-comments/blob/main/docs/agentic-core.md
+- License: MIT
