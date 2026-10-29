@@ -1,6 +1,6 @@
 {
   "name": "agentic-comments",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
@@ -43,6 +43,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./account": {
+      "types": "./dist/account.d.ts",
+      "import": "./dist/account.js"
     },
     "./anchor": {
       "types": "./dist/anchoring.d.ts",

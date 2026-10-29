@@ -2,6 +2,12 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.8.0
+
+### Added
+
+- `agentic-comments/account` exports `commentsAccount`, the account plug-in. `exportAccount(subject, deps)` returns the messages, status changes, edits, suggestions, and decisions of one subject over the documents the host passes, as JSON records. `eraseAccount(subject, deps)` tombstones them and returns counts. A second erase counts 0. The package keeps no owners, grants, or audit rows.
+
 ## 0.7.0
 
 ### Added

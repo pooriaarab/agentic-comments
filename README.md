@@ -86,6 +86,21 @@ erased message or a thread that holds one.
 Replicas that edit one message at once leave a copy each. When the copies agree on the author kind and time,
 the read keeps the erased copy, or else the latest edit. An edit and a delete made at once keep the edit.
 
+## Account export and erase
+
+`import { commentsAccount } from "agentic-comments/account"` lets a host export and erase one person's data
+without reading the storage layout. Pass the subject (`{ kind, name }`) and `{ documents, actor }`. Each
+document is `{ id, comments, suggestions }`. The actor is made with `stamp()` and must name the subject.
+`exportAccount` returns JSON records in `messages`, `statusChanges`, `edits`, `suggestions`, `decisions`, and
+`unread`. `eraseAccount` tombstones the same data as `erasePerson` and returns counts. A second erase counts 0.
+The package keeps no owners, grants, or audit rows, so it exports none. A run covers only the subject's own
+kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions of the subject inside other
+people's messages are neither exported nor erased. Records can name other people, such as the moderator in
+`editedBy` or the person in `decidedBy`. A record in `unread` means the export is not complete: the store
+holds entries of the subject that a read cannot show. A missing `documents` list is an error, not an empty
+run. Erase goes document by document. If one fails, the error names it, the earlier documents stay erased,
+and a repeat counts only what is left. The counts of a failed run are lost.
+
 ## Anchors for plain text
 
 `agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
