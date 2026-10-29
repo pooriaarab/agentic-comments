@@ -321,12 +321,42 @@ try {
 - The client never follows a redirect and never retries. A write that you abort after the client sends it can still apply:
   read the thread before you try again.
 
+## React panel
+
+`agentic-comments/ui` is a threaded comments panel for a React page. It shows the thread list, the quote each thread
+points at, a reply box, resolve and reopen, and an author mark on every message. A person shows a name. An agent
+shows the `AgentBadge` of `agentic-design`, with the words "Comment by an agent". Each suggestion has Accept and
+Reject buttons. React 19 and `react-dom` are peer dependencies. The package depends on `agentic-design`.
+
+```tsx
+import { CommentsPanel, createClient } from "agentic-comments/ui";
+import "agentic-design/styles.css";
+import "agentic-comments/ui.css";
+
+const client = createClient({ baseUrl: "https://comments.example.com", token });
+<CommentsPanel client={client} docId="report-q3" />;
+```
+
+`client` is any object with the methods of `PanelClient`, so a host can pass its own. The panel reads who is signed
+in from `client.me()`. It follows the product rule for suggestions: an agent never gets Accept or Reject for its own
+suggestion, and an agent needs the `comments:admin` scope to decide any suggestion. A person who holds
+`comments:write` decides any suggestion. `mayDecide(me, suggestion)` is exported, so a host can use the same rule.
+A hidden button is a help and not a lock: the Worker checks every call. The panel shows an error with its code, and
+it never retries a call with other input. It needs a document whose text holds the quote, because a new thread
+points at a quote. It meets WCAG 2.2 AA (axe runs on light, dark, and 390px) and its classes all start with `agd-`.
+
+The demo page in `ui/` runs the panel with no token on in-memory data, with a switch for the signed-in principal. Open
+`/#token=<bearer>&doc=<id>` on a Worker that serves it, and it talks to that Worker. `npm run test:ui` drives it in
+Chromium against `wrangler dev`.
+
+![The panel in the light theme](docs/screenshots/panel-light.png)
+
 ## Live demo
 
 A demo Worker runs at <https://agentic-comments-demo.hello-fd1.workers.dev>. It is a staging site. Check it with
 `GET /health`. Every `/api/v1` route needs a bearer token, and the demo does not publish one, so a call
 with no token gets `401`. The data lives in a D1 database in the EU (`weur`), and the Worker sets the
-region to `eu`.
+region to `eu`. The panel demo page is at the root of the demo Worker.
 
 To deploy your own copy, log in with `wrangler login` or set `CLOUDFLARE_API_TOKEN`, then:
 
@@ -442,7 +472,7 @@ const stop = notifications.subscribe(async (event) => {
 git clone https://github.com/pooriaarab/agentic-comments
 cd agentic-comments
 npm ci
-npm run ci:local
+npm run ci:local   # build, typecheck, unit tests, then the browser tests (npx playwright install chromium once)
 ```
 
 ## License

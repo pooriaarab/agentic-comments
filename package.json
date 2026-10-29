@@ -1,6 +1,6 @@
 {
   "name": "agentic-comments",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
@@ -59,36 +59,62 @@
     "./worker": {
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js"
-    }
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js"
+    },
+    "./ui.css": "./dist/ui.css"
   },
   "bin": {
     "agentic-comments": "./dist/cli.js",
     "agentic-comments-mcp": "./dist/mcp-bin.js"
   },
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "build": "tsup && node scripts/build-css.mjs",
+    "typecheck": "tsc --noEmit && tsc -p ui --noEmit",
     "test": "vitest run",
-    "deploy:demo": "npm run build && WRANGLER_SEND_METRICS=false wrangler deploy --config wrangler.demo.jsonc",
+    "deploy:demo": "npm run build && npm run build:ui && WRANGLER_SEND_METRICS=false wrangler deploy --config wrangler.demo.jsonc",
     "clean": "rm -rf dist",
     "prepack": "npm run build",
-    "ci:local": "npm run build && npm run typecheck && npm test"
+    "ci:local": "npm run build && npm run typecheck && npm test && npm run test:ui",
+    "build:ui": "node scripts/build-ui.mjs",
+    "test:ui": "npm run build && npm run build:ui && playwright test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "agentic-design": "^0.5.0",
     "agentic-identity": "^0.8.0",
     "hono": "^4.13.14",
     "zod": "^4.6.7"
   },
   "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "yjs": "^13.6.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
     "tsup": "^8.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0",
     "wrangler": "^4.155.0",
     "yjs": "^13.6.0"
-  }
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "sideEffects": [
+    "**/*.css"
+  ]
 }

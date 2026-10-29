@@ -9,3 +9,7 @@ comments.ydoc*
 *.ydoc.lock
 *.ydoc.tmp-*
 *.ydoc.lock.stale-*
+public/
+test-results/
+playwright-report/
+.wrangler/

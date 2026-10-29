@@ -32,6 +32,11 @@ anyone's with that scope). Check `unread` in an export.
 Over MCP, call `list_threads`, `add_comment`, `reply_to_thread`, `resolve_thread`, `suggest_change`,
 `accept_suggestion`, `reject_suggestion`, and the tools above. You never pass an author or a scope.
 
+## Show threads in a React page
+
+`import { CommentsPanel, createClient } from "agentic-comments/ui"` and load `agentic-design/styles.css` and `agentic-comments/ui.css`.
+`<CommentsPanel client={createClient({ baseUrl, token })} docId="..." />`. The panel never offers an agent Accept or Reject for its own suggestion.
+
 ## Rules
 
 - The host stamps the author. Never call `stamp()` yourself, and never pass an author in an input.

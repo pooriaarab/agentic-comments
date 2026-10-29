@@ -7,6 +7,8 @@
   "preview_urls": false,
   "compatibility_date": "2026-01-01",
   "compatibility_flags": ["nodejs_compat"],
+  // The panel demo page is built into public/ui (npm run build:ui). The API and /health still reach the Worker first.
+  "assets": { "directory": "./public/ui", "run_worker_first": ["/api/*", "/health"] },
   // The public demo is a throwaway that uses a static token list, so it turns the dev fallback on.
   "vars": { "AGENTIC_COMMENTS_REGION": "eu", "AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS": "1" },
   // Created with `wrangler d1 create agentic-comments-demo --location weur`.
