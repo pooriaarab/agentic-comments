@@ -1,0 +1,13 @@
+{
+  // The live demo. Deploy with: npm run deploy:demo (see "Live demo" in the README).
+  // Secrets are never in this file. Set them with `wrangler secret put --config wrangler.demo.jsonc`.
+  "name": "agentic-comments-demo",
+  "main": "dist/worker.js",
+  "workers_dev": true,
+  "preview_urls": false,
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": { "AGENTIC_COMMENTS_REGION": "eu" },
+  // Created with `wrangler d1 create agentic-comments-demo --location weur`.
+  "d1_databases": [{ "binding": "DB", "database_name": "agentic-comments-demo", "database_id": "61c8a26a-953c-4ef0-9a8c-e160e92c25a8" }]
+}

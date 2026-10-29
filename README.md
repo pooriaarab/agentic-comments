@@ -216,6 +216,23 @@ curl -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
   http://127.0.0.1:8787/api/v1/docs/d1/threads
 ```
 
+## Live demo
+
+A demo Worker runs at <https://agentic-comments-demo.hello-fd1.workers.dev>. It is a staging site. Check it with
+`GET /health`. Every `/api/v1` route needs a bearer token, and the demo does not publish one, so a call
+with no token gets `401`. The data lives in a D1 database in the EU (`weur`), and the Worker sets the
+region to `eu`.
+
+To deploy your own copy, log in with `wrangler login` or set `CLOUDFLARE_API_TOKEN`, then:
+
+```sh
+npx wrangler d1 create agentic-comments-demo --location weur   # once. Put the id in wrangler.demo.jsonc.
+npx wrangler secret put AGENTIC_COMMENTS_TOKENS --config wrangler.demo.jsonc   # see HTTP API
+npm run deploy:demo
+```
+
+`wrangler.demo.jsonc` sets no secret. Deploys run by hand, and no CI job holds a Cloudflare token.
+
 ## Notifications
 
 `Notifications` turns changes into events that your app can send to a notifier. It watches the data, so it
