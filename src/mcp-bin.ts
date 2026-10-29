@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { CommentsError } from "./errors.js";
 import { FileStore, lockTimeoutFrom } from "./file-store.js";
 import { operatorActor } from "./operator.js";
 import { startMcp } from "./mcp.js";
@@ -34,7 +35,8 @@ if (flags.includes("--help") || flags.includes("-h")) {
   try {
     const env = process.env;
     const asAt = args.indexOf("--as");
-    // A bare `--as` with no value gives no principal, and the operator refuses it.
+    // A bare `--as` with no value is refused by name, and never falls back to the variable.
+    if (asAt !== -1 && args[asAt + 1] === undefined) throw new CommentsError("INVALID_AUTHOR", "--as needs a value, as --as kind:name");
     const as = asAt === -1 ? env.AGENTIC_COMMENTS_AS : args[asAt + 1];
     await startMcp(new FileStore(env.AGENTIC_COMMENTS_FILE ?? "./comments.ydoc", { lockTimeoutMs: lockTimeoutFrom(env) }), operatorActor(as, env.AGENTIC_COMMENTS_SCOPES));
   } catch (error) {
