@@ -55,6 +55,33 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Anchors for plain text
+
+`agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
+Offsets are UTF-16 code units, like `slice`.
+
+```ts
+import { createAnchor, resolveAnchor } from "agentic-comments/anchor";
+
+const anchor = createAnchor("Hello brave world", 6, 11);
+const edits = [{ from: 0, to: 0, insert: "Oh, " }];
+resolveAnchor(anchor, "Oh, Hello brave world", edits, 17);
+// { state: "attached", from: 10, to: 15, method: "mapped" }
+```
+
+- An edit is `{ from, to, insert }`. Edits apply one after another, each in the text left by the one before.
+- `resolveAnchor(anchor, newText, edits?, originalLength?)` maps the range through the edits. Pass
+  `originalLength`, the length of the old text, so it can check that the edits fit both texts.
+- With edits, the edits are the truth, and the quote is not searched. A range that holds other text is `edited`.
+- With no edits, it searches for the quote. One match wins. With many, the best fit of the text around the
+  quote wins. On a tie, the match at the old offsets wins, or else the anchor is `orphaned`, because a wrong
+  place is worse than none. More than 500 matches orphan too.
+- `edited` means the range exists but holds other text. `orphaned` means the content is gone, the quote is ambiguous, the edits do not fit the text, or the anchor is bad data.
+- An insert at an edge of the range stays outside it. Deleting the whole range orphans it.
+- `createAnchor` throws a `RangeError` for an empty range, a range outside the text, or a range that cuts a
+  surrogate pair in two. It does not check grapheme boundaries, so a flag or a joined emoji can still be cut.
+- `mapPosition` and `mapRange` move offsets through edits on their own.
+
 ## When the content changes
 
 Every thread and suggestion has an `anchorState`:
