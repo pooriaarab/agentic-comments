@@ -1,17 +1,15 @@
 {
   "name": "agentic-comments",
   "version": "0.0.0",
-  "description": "Comment threads and suggestions anchored to any content, from people and agents.",
+  "description": "Comment threads anchored to any content, from people and agents.",
   "keywords": [
     "comments",
     "threads",
     "mentions",
-    "suggestions",
     "annotations",
     "collaboration",
     "agents",
-    "yjs",
-    "mcp"
+    "yjs"
   ],
   "license": "MIT",
   "author": "Pooria Arab",
@@ -22,7 +20,7 @@
   "type": "module",
   "private": false,
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "files": [
     "dist"
@@ -30,7 +28,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "mcpName": "io.github.pooriaarab/agentic-comments",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -38,10 +35,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
-  },
-  "bin": {
-    "agentic-comments": "./dist/cli.js",
-    "agentic-comments-mcp": "./dist/mcp-bin.js"
   },
   "scripts": {
     "build": "tsup",
@@ -51,8 +44,7 @@
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.25.0"
+    "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
