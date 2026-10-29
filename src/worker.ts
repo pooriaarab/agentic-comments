@@ -5,7 +5,7 @@ import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudfla
 import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
 import { ACCEPT_SCOPE } from "./suggestions.js";
-import { stamp, type Actor } from "./principal.js";
+import { ERASED_NAME, readAuthor, stamp, type Actor, type Author } from "./principal.js";
 import { MODERATE_SCOPE } from "./threads.js";
 import { CommentsService } from "./service.js";
 import { TEXT_ROOT } from "./local-host.js";
@@ -187,6 +187,42 @@ export class CommentsDocs {
       await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
       return result;
     });
+  }
+
+  private async scan(author: Author, each: (id: string, row: { state?: unknown; createdBy?: unknown; createdAt?: unknown }) => Promise<void>): Promise<void> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const { id, data } of page.items) {
+        const by = readAuthor((data as { createdBy?: unknown }).createdBy);
+        if (by && by.kind === author.kind && by.name === author.name) await each(id, data as never);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+
+  /** The documents this subject created: the creator is kept on the row. For the account plug-in. */
+  async exportCreated(author: Author): Promise<{ documentId: string; createdAt: unknown }[]> {
+    const out: { documentId: string; createdAt: unknown }[] = [];
+    await this.scan(author, async (id, row) => void out.push({ documentId: id, createdAt: row.createdAt ?? null }));
+    return out;
+  }
+
+  /** Give the creator of each document this subject made the tombstone name. Returns how many. A repeat finds none. */
+  async eraseCreated(author: Author): Promise<number> {
+    const ids: string[] = [];
+    await this.scan(author, async (id) => void ids.push(id));
+    let count = 0;
+    for (const id of ids) {
+      await this.store.transaction(async (tx) => {
+        const row = (await tx.get(DOCS, id)) as { createdBy?: unknown } | null;
+        const by = readAuthor(row?.createdBy);
+        if (!row || !by || by.kind !== author.kind || by.name !== author.name) return;
+        await tx.put(DOCS, id, { ...row, createdBy: { kind: by.kind, name: ERASED_NAME } } as never);
+        count++;
+      });
+    }
+    return count;
   }
 }
 

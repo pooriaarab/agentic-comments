@@ -19,6 +19,11 @@ export interface CommentsAccountDeps {
   documents: Iterable<CommentsAccountDocument>;
   /** Made with `stamp()`. It must name the subject: the same kind and name. A moderate scope does not widen the run. */
   actor: Actor;
+  /**
+   * The document store of the HTTP worker (`CommentsDocs`), when the host runs it. It keeps the creator of each
+   * document on its row, outside the Yjs state. Pass it so export lists those documents and erase tombstones the creator.
+   */
+  creators?: { exportCreated(author: Author): Promise<{ documentId: string; createdAt: unknown }[]>; eraseCreated(author: Author): Promise<number> };
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -28,13 +33,15 @@ export interface CommentsAccount {
   /**
    * Collections, each record tagged with `documentId`: `messages` (with the thread anchor), `statusChanges`,
    * `edits` (the subject's edits of other people's messages), `suggestions` (the ones the subject wrote),
-   * `decisions` (accepts and rejects by the subject), and `unread` (stored entries of the subject that a read
-   * cannot show; the export is not complete when this has a record). The package keeps no owners, grants,
-   * or audit rows: these are the only kinds of record it holds for a person.
+   * `decisions` (accepts and rejects by the subject), `documents` (the worker documents the subject created, only
+   * when `deps.creators` is set), and `unread` (stored entries of the subject that a read
+   * cannot show; the export is not complete when this has a record). The package keeps no grants or audit rows. Its
+   * one owner-like record is the creator of a worker document, which `deps.creators` covers. A host that runs the
+   * worker and omits `creators` leaves that creator in place.
    */
-  exportAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statusChanges" | "edits" | "suggestions" | "decisions" | "unread", JsonRecord[]>>;
+  exportAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statusChanges" | "edits" | "suggestions" | "decisions" | "documents" | "unread", JsonRecord[]>>;
   /** Replaces what the subject wrote with a tombstone (see `Comments.erasePerson`). Counts by kind, summed over documents. The thread shape stays. A repeat finds nothing and counts 0. A decision that the subject made on their own suggestion is deleted and not counted, while `unread` in the export counts it. */
-  eraseAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions", number>>;
+  eraseAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions" | "documents", number>>;
 }
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -68,7 +75,7 @@ export const commentsAccount: CommentsAccount = {
   id: "comments",
   async exportAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
-    const out: Record<"messages" | "statusChanges" | "edits" | "suggestions" | "decisions" | "unread", JsonRecord[]> = { messages: [], statusChanges: [], edits: [], suggestions: [], decisions: [], unread: [] };
+    const out: Record<"messages" | "statusChanges" | "edits" | "suggestions" | "decisions" | "documents" | "unread", JsonRecord[]> = { messages: [], statusChanges: [], edits: [], suggestions: [], decisions: [], documents: [], unread: [] };
     for (const { id: documentId, comments, suggestions } of documents) {
       const c = comments.exportPerson(own.name, own);
       const s = suggestions.exportPerson(own.name, own);
@@ -82,11 +89,12 @@ export const commentsAccount: CommentsAccount = {
       const unread = c.unread + s.unread;
       if (unread > 0) out.unread.push({ documentId, count: unread });
     }
+    if (deps.creators) out.documents.push(...(await deps.creators.exportCreated(own)));
     return plain(out);
   },
   async eraseAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
-    const counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0 };
+    const counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 };
     for (const { id, comments, suggestions } of documents) {
       try {
         const c = comments.erasePerson(own.name, own);
@@ -103,6 +111,7 @@ export const commentsAccount: CommentsAccount = {
         throw new CommentsError(known ? cause.code : "CORRUPT", `erase stopped at document ${shown(id)}: ${reason}`, { cause });
       }
     }
+    if (deps.creators) counts.documents = await deps.creators.eraseCreated(own);
     return counts;
   },
 };
