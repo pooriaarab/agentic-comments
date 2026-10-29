@@ -448,4 +448,55 @@ describe("batches, loads, and re-entry", () => {
     r.ydoc.getMap("comments.suggestion-applied").set("no-such:1", { junk: true });
     expect(r.notifications.errors().some((e) => e.source === "data")).toBe(true);
   });
+
+  test("a bad record in a decision map makes no event, even after a restart", () => {
+    const a = replica();
+    const s = a.suggestions.add({ anchor: cell, change: { value: 1 } }, bot);
+    a.suggestions.accept(s.id, ada);
+    const fresh = new Notifications(a.comments, a.suggestions);
+    const seen: string[] = [];
+    fresh.subscribe((e) => void seen.push(e.type));
+    a.ydoc.getMap("comments.suggestion-applied").set(`${s.id}:42`, "garbage");
+    a.ydoc.getMap("comments.suggestion-applied").set(`${s.id}:43`, { by: { kind: "human" }, at: "yesterday" });
+    const t = a.suggestions.add({ anchor: cell, change: { value: 2 } }, bot);
+    a.suggestions.reject(t.id, ada);
+    a.ydoc.getMap("comments.suggestion-rejected").set(`${t.id}:44`, null);
+    expect(seen).toEqual(["suggestion.created", "suggestion.rejected"]);
+  });
+
+  test("a thread whose map arrived empty and got its messages later is created then", () => {
+    const r = replica();
+    const threads = r.ydoc.getMap<Y.Map<unknown>>("comments.threads");
+    const fields = new Y.Map<unknown>();
+    threads.set("t1", fields);
+    r.events.length = 0;
+    r.ydoc.transact(() => {
+      fields.set("anchor", cell);
+      fields.set("state", { status: "open", by: { kind: "human", name: "eve" }, at: "2026-01-01T00:00:00.000Z" });
+      const list = new Y.Array<unknown>();
+      fields.set("messages", list);
+      list.push([{ id: "m1", at: "2026-01-01T00:00:00.000Z", author: { kind: "human", name: "eve" }, body: "hi", mentions: ["bob"] }]);
+    });
+    expect(r.types()).toEqual(["thread.created", "mention"]);
+  });
+
+  test("a decision that arrives before its suggestion still makes an accepted event", () => {
+    const a = replica();
+    const s = a.suggestions.add({ anchor: cell, change: { value: 1 } }, bot);
+    const c = replica();
+    c.events.length = 0;
+    c.ydoc.getMap("comments.suggestion-applied").set(`${s.id}:7`, { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: { r: 1 } });
+    Y.applyUpdate(c.ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    expect(c.types()).toEqual(["suggestion.created", "suggestion.accepted"]);
+  });
+
+  test("a listener that returns a thenable with only then has its real error reported", async () => {
+    const errors: unknown[] = [];
+    const r = replica(undefined, (e) => void errors.push(e));
+    r.notifications.subscribe((() => ({ then: (_ok: unknown, bad: (e: unknown) => void) => bad(new Error("real failure")) })) as never);
+    r.comments.add({ anchor: cell, body: "x" }, ada);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(errors.map((e) => (e as Error).message)).toEqual(["real failure"]);
+  });
 });
+

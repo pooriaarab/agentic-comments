@@ -205,8 +205,11 @@ const stop = notifications.subscribe(async (event) => {
   the document. A listener that throws, or returns a rejected promise, cannot break a write or another
   listener. The
   error goes to `onError`, or to `errors()`.
-- Write a thread in one Yjs transaction, as `add` does. A thread that another client builds in steps makes
-  events for what can be read as each change arrives, and its first message can come as `message.added`.
+- Write a thread in one Yjs transaction, as `add` does. A thread whose map arrives empty and gets its fields
+  and messages in one later transaction is treated as created then. A thread built in more steps than that
+  can make no event.
+- A peer that deletes a thread or a suggestion and adds it back under the same id makes a `created` event
+  again once the id has left the `seenLimit` window.
 - A change that arrives as a whole thread, with its replies and status inside, makes an event for each
   message and for a resolved status. A reopen inside such a thread makes none. A message past the thread's read limit makes no event.
 

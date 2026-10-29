@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import { readAuthor, type Author } from "./principal.js";
+import { validDate } from "./validate.js";
 import type { Suggestions } from "./suggestions.js";
 import type { Comments } from "./threads.js";
 
@@ -178,7 +179,7 @@ export class Notifications {
           if (this.closed) return;
           try {
             const result = listener(event);
-            if (typeof (result as Promise<void> | undefined)?.then === "function") (result as Promise<void>).catch((error: unknown) => this.fail(error, "listener"));
+            if (typeof (result as Promise<void> | undefined)?.then === "function") Promise.resolve(result).catch((error: unknown) => this.fail(error, "listener"));
           } catch (error) {
             this.fail(error, "listener");
           }
@@ -197,7 +198,10 @@ export class Notifications {
         if (event.target === threads) {
           for (const [id, change] of (event as Y.YMapEvent<unknown>).keys) if (change.action === "add") this.guard(() => this.threadCreated(id, source));
         } else if (path.length === 1 && event.target instanceof Y.Map) {
-          const change = (event as Y.YMapEvent<unknown>).keys.get("state");
+          const keys = (event as Y.YMapEvent<unknown>).keys;
+          // A thread whose map was empty when it arrived, and got its messages later, is created now.
+          if (keys.get("messages")?.action === "add") this.threadCreated(String(path[0]), source);
+          const change = keys.get("state");
           if (change) this.statusChanged(String(path[0]), change.oldValue, source);
         } else if (path.length === 2 && path[1] === "messages" && event.target instanceof Y.Array) {
           const ids = new Set<unknown>();
@@ -260,18 +264,28 @@ export class Notifications {
       this.guard(() => {
         const s = this.suggestions!.get(id);
         this.emit({ id: `suggestion.created:${id}`, type: "suggestion.created", at: s.createdAt, source, actor: actorOf(s.author), anchorType: s.anchor.type, suggestionId: id });
+        // A decision can arrive before the suggestion it is about.
+        if (s.status !== "pending") this.decisionEvent(s, source);
       });
     }
   }
 
+  private decisionEvent(s: { id: string; status: string; decidedBy?: Author; decidedAt?: string; anchor: { type: string } }, source: Source): void {
+    if (s.status === "pending" || !s.decidedBy || !s.decidedAt) return;
+    const type = s.status === "accepted" ? "suggestion.accepted" : "suggestion.rejected";
+    this.emit({ id: `${type}:${s.id}`, type, at: s.decidedAt, source, actor: actorOf(s.decidedBy), anchorType: s.anchor.type, suggestionId: s.id });
+  }
+
   private decided(event: Y.YMapEvent<unknown>, source: Source, type: "suggestion.accepted" | "suggestion.rejected"): void {
     for (const [key, change] of event.keys) {
-      if (change.action === "delete") continue;
-      const id = key.slice(0, key.lastIndexOf(":"));
+      // Only a new record that is itself valid is a decision. A bad record, or a change to an old one, is not.
+      if (change.action !== "add") continue;
       try {
+        const raw = (event.target as Y.Map<unknown>).get(key) as { by?: unknown; at?: unknown } | null;
+        if (!raw || readAuthor(raw.by) === undefined || !validDate(raw.at)) throw new Error("a decision record is not valid");
+        const id = key.slice(0, key.lastIndexOf(":"));
         const s = this.suggestions!.get(id);
-        if (s.status !== (type === "suggestion.accepted" ? "accepted" : "rejected") || !s.decidedBy || !s.decidedAt) continue;
-        this.emit({ id: `${type}:${id}`, type, at: s.decidedAt, source, actor: actorOf(s.decidedBy), anchorType: s.anchor.type, suggestionId: id });
+        if (s.status === (type === "suggestion.accepted" ? "accepted" : "rejected")) this.decisionEvent(s, source);
       } catch (error) {
         this.fail(error, "data");
       }
