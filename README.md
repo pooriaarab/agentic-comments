@@ -177,7 +177,7 @@ npx agentic-comments accept <id>
   `suggest`, `accept`, `reject`, `mcp`. Run `npx agentic-comments --help` for flags.
 - Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
   exits 2.
-- The principal comes from `--as` or `AGENTIC_COMMENTS_AS`. Scopes come only from
+- The principal comes from `--as` or `AGENTIC_COMMENTS_AS`, as `kind:name`. The name is A-Z a-z 0-9 `.` `_` `-`. Scopes come only from
   `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author,
   and a flag that does not apply to a command is refused. `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS` sets the wait
   for a lock, in whole milliseconds.
@@ -197,9 +197,9 @@ npx agentic-comments accept <id>
 document in a D1 database through the `Store` port of `agentic-identity`. It checks every request with the
 `Auth` port, so the host picks who the caller is and no request carries an author.
 
-Set the principals as a secret. It is JSON from a bearer token (32 bytes or more) to `kind:name`, or to
-`{ "as": "kind:name", "scopes": [...] }`. One bad entry refuses the whole table. A request with no valid
-token gets `401`.
+Set the principals as a secret. It is JSON from a bearer token to `kind:name`, or to
+`{ "as": "kind:name", "scopes": [...] }`. A token is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`. A name is A-Z a-z 0-9 `.` `_` `-`.
+One bad entry refuses the whole table. A request with no valid token gets `401`.
 
 ```sh
 wrangler secret put AGENTIC_COMMENTS_TOKENS

@@ -2,6 +2,22 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.5.1
+
+### Changed
+
+- The auth and principal code now uses `agentic-identity` 0.6. The Worker resolves the caller with `requirePrincipal` from
+  `agentic-identity/http`. The token table and the operator principal both go through `parsePrincipal`.
+- A token in `AGENTIC_COMMENTS_TOKENS` is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`. A principal name is A-Z a-z 0-9 `.` `_` `-`.
+  A token table with a token outside this shape is refused as a whole.
+- `createApp` takes an `origins` option. It lists the origins that may send a write with a session cookie. A bearer token needs none.
+- A custom `Auth` that throws returns a `5xx` status with the API error shape and the code `INTERNAL`.
+- A `403` from the credential check returns the API error shape with the code `FORBIDDEN`.
+
+### Removed
+
+- The local kind check and name check in the Worker and the operator code. Both now call `parsePrincipal` from `agentic-identity`.
+
 ## 0.5.0
 
 ### Added
