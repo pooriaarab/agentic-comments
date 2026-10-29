@@ -138,8 +138,8 @@ machine. It cannot check a lock held in another container or on another machine.
 share a volume can have the same process id, and each then clears the other's lock, so they can lose writes. A save that
 would pass 50 MB is refused.
 
-If the version you install has no `agentic-comments` command, build from source. Run `npm run build` and
-use `node dist/cli.js` where these examples say `npx agentic-comments`.
+If the version you install has no `agentic-comments` command, build from source (see Develop). Run
+`npm run build` and use `node dist/cli.js` where these examples say `npx agentic-comments`.
 
 ```sh
 export AGENTIC_COMMENTS_FILE=./comments.ydoc
