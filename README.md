@@ -55,6 +55,30 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Anchors for plain text
+
+`agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
+Offsets are UTF-16 code units, like `slice`.
+
+```ts
+import { createAnchor, resolveAnchor } from "agentic-comments/anchor";
+
+const anchor = createAnchor("Hello brave world", 6, 11);
+const edits = [{ from: 0, to: 0, insert: "Oh, " }];
+resolveAnchor(anchor, "Oh, Hello brave world", edits);
+// { state: "attached", from: 10, to: 15, method: "mapped" }
+```
+
+- An edit is `{ from, to, insert }`. Edits apply one after another, each in the text left by the one before.
+- `resolveAnchor` maps the range through the edits first. If you pass no edits, it tries the old offsets.
+- If the range no longer holds the quote, it searches for the quote. One match wins. With many, the best
+  fit of the text around the quote wins. A tie is `orphaned`, because a wrong place is worse than none.
+- `edited` means the range exists but holds other text. `orphaned` means the content is gone.
+- An insert at an edge of the range stays outside it. Deleting the whole range orphans it.
+- `createAnchor` throws a `RangeError` for an empty range, a range outside the text, or a range that cuts a
+  surrogate pair (an emoji) in two.
+- `mapPosition` and `mapRange` move offsets through edits on their own.
+
 ## When the content changes
 
 Every thread and suggestion has an `anchorState`:

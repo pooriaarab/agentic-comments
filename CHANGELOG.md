@@ -2,6 +2,15 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.4.0
+
+### Added
+
+- `agentic-comments/anchor`: anchors for plain text that need no Yjs and no framework. `createAnchor(text, from, to)`
+  keeps the quote and the text around it. `resolveAnchor(anchor, newText, edits?)` finds the range again: it maps
+  the range through the edits, then falls back to the quote and its context. It returns `attached`, `edited`, or
+  `orphaned`. `mapPosition` and `mapRange` move offsets through a list of edits.
+
 ## 0.3.0
 
 ### Added
