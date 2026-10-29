@@ -7,11 +7,11 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 ### Added
 
 - A CLI, `agentic-comments`, over a local store file. Its commands are `init`, `list`, `show`, `comment`,
-  `reply`, `resolve`, `reopen`, `relocate`, `suggestions`, `suggest`, `accept`, `reject`, and `mcp`. Every
-  result is JSON.
-- An MCP server, started with `agentic-comments mcp`. Its tools are `list_threads`, `get_thread`,
-  `add_comment`, `reply_to_thread`, `resolve_thread`, `reopen_thread`, `relocate_thread`,
-  `list_suggestions`, `suggest_change`, `accept_suggestion`, and `reject_suggestion`. The operator sets the
+  `reply`, `resolve`, `reopen`, `relocate`, `suggestions`, `suggest`, `accept`, `reject`, `mcp`, `help`, and
+  `version`. Store commands return JSON. `help` and `version` print plain text.
+- An MCP server, started with `agentic-comments mcp` or the `agentic-comments-mcp` binary. Its tools are
+  `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`, `reopen_thread`,
+  `relocate_thread`, `list_suggestions`, `suggest_change`, `accept_suggestion`, and `reject_suggestion`. The operator sets the
   principal and the scopes when the server starts.
 - A notification stream: `new Notifications(comments, suggestions)` with `subscribe(listener)`. Events hold
   ids and never text. The same change has the same event `id` on every replica.
