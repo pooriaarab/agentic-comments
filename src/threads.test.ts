@@ -733,4 +733,33 @@ describe("limits and names", () => {
     expect(code(() => comments.add({ anchor: { type: "wide", blob: "x".repeat(5_000) } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
     expect(comments.add({ anchor: { type: "wide", blob: "small" } as never, body: "x" }, ada).anchor).toEqual({ type: "wide", blob: "small" });
   });
+
+  test("handles match across Unicode forms", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "ping @cafe\u0301" }, ada);
+    expect(thread.messages[0].mentions).toEqual(["caf\u00e9"]);
+    expect(comments.list({ mentioning: "café" })).toHaveLength(1);
+    expect(comments.list({ mentioning: "cafe\u0301" })).toHaveLength(1);
+  });
+
+  test("a body refuses zero-width and direction controls but keeps newlines and emoji joiners", () => {
+    const comments = make();
+    for (const body of ["hi @\u200Bbob", "abc\u202Edef", "a\u2066b", "a\uFEFFb"]) {
+      expect(code(() => comments.add({ anchor: cell, body }, ada))).toBe("INVALID_INPUT");
+    }
+    expect(comments.add({ anchor: cell, body: "line one\nline two \u{1F468}\u200D\u{1F469}" }, ada).messages).toHaveLength(1);
+  });
+
+  test("problems never return a peer's text as an id", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    doc.getMap<Y.Map<unknown>>("comments.threads").set("\u202Eabc", new Y.Map());
+    expect(comments.problems().map((p) => p.id)).toEqual(["?abc"]);
+  });
+
+  test("a scoped package name, a code span, and a path do not mention anyone", () => {
+    const comments = make();
+    const body = "run npm i @types/node and `@bob` then see @scope/pkg";
+    expect(comments.add({ anchor: cell, body }, ada).messages[0].mentions).toEqual([]);
+  });
 });

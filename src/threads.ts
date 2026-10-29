@@ -2,7 +2,7 @@ import * as Y from "yjs";
 import { BUILT_IN_KINDS, textOf, type Anchor, type AnchorKind } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
-import { ID, shown } from "./text.js";
+import { ID, INVISIBLE, safeId, shown } from "./text.js";
 
 export interface Message {
   id: string;
@@ -24,7 +24,7 @@ export interface Thread {
   statusBy: Author;
   statusAt: string;
   messages: Message[];
-  /** How many stored messages this read left out because they were not valid. `problems()` names them. */
+  /** How many stored entries this read did not show: invalid ones, repeated ids, and valid ones past the read limit. `problems()` names them. */
   skipped: number;
 }
 
@@ -55,13 +55,16 @@ export interface ThreadFilter {
 const THREADS = "comments.threads";
 const MAX_BODY = 10_000;
 const MAX_MENTIONS = 50;
-/** A local reply stops here. Replicas that reply at once can go past it. A read shows the first READ_LIMIT valid messages and reports the rest. */
+/**
+ * A local reply stops here. Replicas that reply at once can go past it. A read shows the first READ_LIMIT
+ * valid messages and reports the rest. A read still scans every stored entry.
+ */
 const MAX_MESSAGES = 1_000;
 const READ_LIMIT = 2 * MAX_MESSAGES;
 const MAX_ANCHOR = 4_096;
 const STATUSES = ["open", "resolved"];
 const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}_.-]{0,62}[\p{L}\p{N}\p{M}])?$/u;
-const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)/gu;
+const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)(?![\p{L}\p{N}\p{M}_.-]|\/)/gu;
 
 type Fields = Y.Map<unknown>;
 
@@ -77,17 +80,20 @@ function exact(input: unknown, allowed: string[], what: string): Record<string, 
 }
 
 function body(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "" || value.length > MAX_BODY) invalid(`a body must be text of 1 to ${MAX_BODY} characters`);
+  if (typeof value !== "string" || value.trim() === "" || value.length > MAX_BODY || INVISIBLE.test(value)) {
+    invalid(`a body must be text of 1 to ${MAX_BODY} characters, with no zero-width or direction control characters`);
+  }
   return value as string;
 }
 
-/** Handles match without case and without leading `@`. They are stored in this form. */
-const handle = (value: string): string => value.replace(/^@+/, "").toLowerCase();
+/** Handles match without case, without leading `@`, and across Unicode forms. They are stored in this form. */
+const handle = (value: string): string => value.normalize("NFC").replace(/^@+/, "").toLowerCase().normalize("NFC");
 
 const validHandle = (value: unknown): value is string => typeof value === "string" && HANDLE.test(value) && handle(value) === value;
 
 function mentionsOf(text: string, explicit: unknown): string[] {
-  const found = [...text.matchAll(MENTION)].map((m) => {
+  const prose = text.replace(/`[^`]*`/g, " ");
+  const found = [...prose.matchAll(MENTION)].map((m) => {
     const name = m[1].replace(/[._-]+$/, "");
     if (!HANDLE.test(handle(name))) invalid(`"@${name.slice(0, 20)}" is not a valid handle: use up to 64 characters`);
     return handle(name);
@@ -328,9 +334,9 @@ export class Comments {
       try {
         const { thread, issues } = this.read(id, fields);
         threads.push(thread);
-        for (const reason of issues) problems.push({ id: id.slice(0, 64), reason });
+        for (const reason of issues) problems.push({ id: safeId(id), reason });
       } catch (error) {
-        problems.push({ id: id.slice(0, 64), reason: (error as Error).message });
+        problems.push({ id: safeId(id), reason: (error as Error).message });
       }
     }
     return { threads, problems };

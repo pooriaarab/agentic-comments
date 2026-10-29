@@ -74,6 +74,11 @@ normal sync, and every replica sees the same threads.
 - A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows the first
   2,000 valid messages. `skipped` and `problems()` report the rest.
 - Every replica of a document must register the same custom anchor kinds.
+- A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
+  the thread unreadable.
+- A read scans every stored entry. A peer that writes millions of junk entries slows every read.
+- A body mentions anyone named as `@handle`. Put `@` text in backticks to avoid that. A scoped
+  package name such as `@scope/pkg` is not a mention.
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
   and `. _ -`. A longer handle in a body is refused.
 
