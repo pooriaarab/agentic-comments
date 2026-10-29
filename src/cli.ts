@@ -75,6 +75,9 @@ export function parseArgs(argv: string[]): Parsed {
   if (command === undefined || command === "--help" || command === "-h") return { command: "help", flags: {}, many: {} };
   if (command === "--version" || command === "-V") return { command: "version", flags: {}, many: {} };
   if (!COMMANDS.includes(command)) throw new UsageError(`unknown command "${command}"`);
+  // `mcp --help` and `mcp --version` must answer and exit, never start the server.
+  if (command === "mcp" && rest.some((a) => a === "--help" || a === "-h")) return { command: "help", flags: {}, many: {} };
+  if (command === "mcp" && rest.some((a) => a === "--version" || a === "-V" || a === "-v")) return { command: "version", flags: {}, many: {} };
   const parsed: Parsed = { command, flags: {}, many: {} };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
