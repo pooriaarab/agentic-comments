@@ -60,19 +60,25 @@ normal sync, and every replica sees the same threads.
 - `comments.deleteMessage(threadId, messageId, actor)` removes one message. The last message of a thread
   stays: delete the thread instead.
 - `comments.deleteThread(threadId, actor)` removes a thread. Its author can do it while every message is theirs.
-- `comments.exportPerson(name, actor)` returns the messages a person wrote and the status change of theirs
-  that stands. It holds no one else's words. `suggestions.exportPerson` lists their suggestions.
+- `comments.exportPerson(name, actor)` returns the messages a person wrote, the status change of theirs that
+  stands, and their edits to other people's messages. It holds no one else's words. `unread` counts stored
+  entries with their name that the read cannot show (a bad message, an unreadable thread). When it is not 0,
+  the export is not complete. `suggestions.exportPerson` lists their suggestions and decisions.
 - `comments.erasePerson(name, actor)` replaces each message of that person with a tombstone: the body is
   `[erased]`, the author name is `erased`, and mentions go. The author kind stays, so machine-made work stays
-  marked. The thread keeps its shape, order, and times. `suggestions.erasePerson` gives their suggestions a
-  tombstone author and drops the summary.
+  marked. The thread keeps its shape, order, and times. It works on the stored entries, so it also reaches a bad
+  message, a message past the read limit, and a copy that a merge hid. A status change of theirs and their name
+  as an editor get the tombstone name. `suggestions.erasePerson` does the same for their suggestions
+  (it drops the summary) and their decisions. No principal can have the name `erased`.
 
-Only the author can edit or delete a message, and a person can export or erase their own data. A principal
-with the `comments:moderate` scope (`MODERATE_SCOPE`) can do it for anyone. The host gives that scope to an
-owner or admin. An edit made by a moderator records the moderator in `editedBy`.
+Only the author can edit or delete a message, and a person can export or erase their own data: the same kind
+and name. A principal with the `comments:moderate` scope (`MODERATE_SCOPE`) can do it for anyone, and an
+export or erase by a moderator covers every kind with that name. The host gives that scope to an owner or
+admin. An edit made by a moderator records the moderator in `editedBy`. Nobody but a moderator can delete an
+erased message or a thread that holds one.
 
-Replicas that edit one message at once leave a copy each. The read keeps the erased copy, or else the
-latest edit.
+Replicas that edit one message at once leave a copy each. When the copies agree on the author kind and time,
+the read keeps the erased copy, or else the latest edit. An edit and a delete made at once keep the edit.
 
 ## Anchors for plain text
 
@@ -389,9 +395,11 @@ const stop = notifications.subscribe(async (event) => {
 - A body mentions anyone named as `@handle`. Put `@` text in backticks to avoid that. Any two backticks in a body pair up, so a loose backtick
   can hide a real mention that sits between two of them. A scoped
   package name such as `@scope/pkg` is not a mention.
-- Erase does not touch a name that another person typed in their own message, the `change` of a suggestion,
-  or the names of those who decided a suggestion. Yjs keeps no old text of a deleted or replaced message, but a
-  copy of the document that you saved before the erase still holds it.
+- Erase does not touch a name that another person typed in their own message, or the `change` of a suggestion.
+- Replicas that delete two messages of one thread at once can leave a thread with no message. Only a moderator
+  can delete it. An edit or an erase makes no notification event.
+- Yjs drops the old text of a deleted or replaced message only when the document has garbage collection on
+  (the default). A copy that you saved before an erase or delete still holds it.
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
   and `. _ -`. A longer handle in a body is refused.
 

@@ -2,6 +2,9 @@ import { PRINCIPAL_KINDS, type PrincipalKind } from "agentic-identity";
 import { CommentsError } from "./errors.js";
 import { HIDDEN, VARIATION } from "./text.js";
 
+/** The name an erased author shows. No principal may have it, so a tombstone belongs to no one. */
+export const ERASED_NAME = "erased";
+
 export { PRINCIPAL_KINDS, type PrincipalKind };
 
 /** What a thread keeps about who wrote a message. Scopes never reach storage. */
@@ -42,6 +45,7 @@ export class Actor implements Author {
     const author = readAuthor(input);
     const given = author ? (input as { scopes?: unknown }).scopes : undefined;
     const scopes = given === undefined ? [] : Array.isArray(given) ? Array.from(given as unknown[]) : undefined;
+    if (author?.name === ERASED_NAME) throw new CommentsError("INVALID_AUTHOR", `the name "${ERASED_NAME}" is kept for erased authors`);
     if (!author || !scopes || !scopes.every((s) => typeof s === "string" && s !== "")) {
       throw new CommentsError("INVALID_AUTHOR", `an author needs a kind (${PRINCIPAL_KINDS.join(", ")}), a name, and scopes that are a list of text`);
     }

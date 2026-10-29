@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { describe, expect, test } from "vitest";
-import { Comments, CommentsError, ERASED_BODY, MODERATE_SCOPE, stamp, Suggestions, textAnchor, type Anchor, type SuggestionHost } from "./index.js";
+import { Comments, CommentsError, Notifications, ERASED_BODY, MODERATE_SCOPE, stamp, Suggestions, textAnchor, type Anchor, type SuggestionHost } from "./index.js";
 
 // Ways this can fail, written before the code:
 //  1. Someone other than the author edits or deletes a message, or a thread with other people's replies.
@@ -172,7 +172,7 @@ describe("export and erase a person", () => {
   test("erase tombstones body, name, mentions, and status author; shape stays; others stay", () => {
     const { doc, c, t, u } = setup();
     const before = c.get(t.id);
-    expect(c.erasePerson("ada", ada)).toEqual({ messages: 2, statuses: 1 });
+    expect(c.erasePerson("ada", ada)).toEqual({ messages: 2, statuses: 1, edits: 0 });
     const after = c.get(t.id);
     expect(after.messages.map((m) => m.id)).toEqual(before.messages.map((m) => m.id));
     expect(after.messages.map((m) => m.at)).toEqual(before.messages.map((m) => m.at));
@@ -191,10 +191,10 @@ describe("export and erase a person", () => {
   test("an erased message cannot be edited, keeps the machine-made kind, and erase twice is a no-op", () => {
     const c = make();
     const t = c.add({ anchor: cell, body: "bot note" }, bot);
-    expect(c.erasePerson("scribe", bot)).toEqual({ messages: 1, statuses: 1 });
+    expect(c.erasePerson("scribe", bot)).toEqual({ messages: 1, statuses: 1, edits: 0 });
     expect(c.get(t.id).messages[0].author).toEqual({ kind: "agent_of_human", name: "erased" });
     expect(code(() => c.editMessage(t.id, t.messages[0].id, { body: "x" }, admin))).toBe("FORBIDDEN");
-    expect(c.erasePerson("scribe", bot)).toEqual({ messages: 0, statuses: 0 });
+    expect(c.erasePerson("scribe", bot)).toEqual({ messages: 0, statuses: 0, edits: 0 });
   });
 
   test("erase wins over an edit made at the same time on another replica", () => {
@@ -220,12 +220,140 @@ describe("suggestions of a person", () => {
     const s = new Suggestions(c, host);
     s.add({ anchor: cell, change: { value: 1 }, summary: "ada idea" }, ada);
     s.add({ anchor: cell, change: { value: 2 }, summary: "bob idea" }, bob);
-    expect(s.exportPerson("ada", ada).map((x) => x.summary)).toEqual(["ada idea"]);
+    expect(s.exportPerson("ada", ada).authored.map((x) => x.summary)).toEqual(["ada idea"]);
     expect(code(() => s.erasePerson("ada", bob))).toBe("FORBIDDEN");
-    expect(s.erasePerson("ada", ada)).toBe(1);
+    expect(s.erasePerson("ada", ada)).toEqual({ suggestions: 1, decisions: 0 });
     const left = s.list();
     expect(left.map((x) => x.author.name).sort()).toEqual(["bob", "erased"]);
     expect(left.find((x) => x.author.name === "erased")?.summary).toBeUndefined();
-    expect(s.exportPerson("ada", ada)).toEqual([]);
+    expect(s.exportPerson("ada", ada).authored).toEqual([]);
+  });
+
+  test("a decision by the person is exported and erased, and the suggestion stays decided", () => {
+    const doc = new Y.Doc();
+    const s = new Suggestions(make(doc), host);
+    const one = s.add({ anchor: cell, change: { value: 1 }, summary: "bob idea" }, bob);
+    s.reject(one.id, ada);
+    expect(s.exportPerson("ada", ada).decided).toMatchObject([{ id: one.id, status: "rejected" }]);
+    expect(s.erasePerson("ada", ada)).toEqual({ suggestions: 0, decisions: 1 });
+    expect(s.get(one.id)).toMatchObject({ status: "rejected", decidedBy: { kind: "human", name: "erased" } });
+    expect(s.exportPerson("ada", ada).decided).toEqual([]);
+  });
+});
+
+describe("review findings", () => {
+  const agentAda = stamp({ kind: "agent", name: "ada" });
+
+  test("a principal of another kind with the same name cannot export or erase a person, and erase leaves its messages", () => {
+    const c = make();
+    const t = c.add({ anchor: cell, body: "human ada" }, ada);
+    c.reply(t.id, { body: "agent ada" }, agentAda);
+    expect(c.exportPerson("ada", agentAda).threads[0].messages.map((m) => m.body)).toEqual(["agent ada"]);
+    expect(c.erasePerson("ada", ada)).toMatchObject({ messages: 1 });
+    expect(c.get(t.id).messages.map((m) => m.body)).toEqual(["[erased]", "agent ada"]);
+    expect(c.exportPerson("ada", admin).threads[0].messages.map((m) => m.body)).toEqual(["agent ada"]);
+  });
+
+  test("erase reaches an edit made at the same time on another replica, in the stored data", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const ca = make(a);
+    const t = ca.add({ anchor: cell, body: "start" }, ada);
+    sync(a, b);
+    ca.erasePerson("ada", ada);
+    make(b).editMessage(t.id, t.messages[0].id, { body: "late-secret" }, ada);
+    sync(a, b);
+    expect(ca.erasePerson("ada", ada)).toMatchObject({ messages: 1 });
+    expect(Buffer.from(Y.encodeStateAsUpdate(a)).includes("late-secret")).toBe(false);
+    expect(ca.get(t.id).messages[0].body).toBe(ERASED_BODY);
+    expect(ca.problems()).toEqual([]);
+  });
+
+  test("erase reaches a bad message, a message past the read limit, and an unreadable thread; export counts what it cannot show", () => {
+    const doc = new Y.Doc();
+    const c = make(doc);
+    const t = c.add({ anchor: cell, body: "ok" }, bob);
+    const list = (doc.getMap("comments.threads").get(t.id) as Y.Map<unknown>).get("messages") as Y.Array<unknown>;
+    list.push([{ id: "bad1", at: "nope", author: { kind: "human", name: "ada" }, body: "ada-bad-secret", mentions: [] }]);
+    const broken = new Y.Map<unknown>();
+    doc.getMap("comments.threads").set("broken", broken);
+    broken.set("messages", Y.Array.from([{ id: "bad2", at: "nope", author: { kind: "human", name: "ada" }, body: "ada-broken-secret", mentions: [] }]));
+    expect(c.exportPerson("ada", ada)).toMatchObject({ threads: [], unread: 2 });
+    expect(c.erasePerson("ada", ada)).toMatchObject({ messages: 2 });
+    const stored = Buffer.from(Y.encodeStateAsUpdate(doc)).toString("latin1");
+    expect(stored).not.toContain("ada-bad-secret");
+    expect(stored).not.toContain("ada-broken-secret");
+    expect(c.exportPerson("ada", ada).unread).toBe(0);
+  });
+
+  test("erase also removes the person's name as an editor of another's message", () => {
+    const c = make();
+    const t = c.add({ anchor: cell, body: "bob wrote" }, bob);
+    const mod = stamp({ kind: "human", name: "ada", scopes: [MODERATE_SCOPE] });
+    c.editMessage(t.id, t.messages[0].id, { body: "bob wrote, cleaned" }, mod);
+    expect(c.exportPerson("ada", mod).edits).toEqual([{ threadId: t.id, messageId: t.messages[0].id, at: expect.any(String) }]);
+    expect(c.erasePerson("ada", mod)).toMatchObject({ messages: 0, edits: 1 });
+    expect(c.get(t.id).messages[0]).toMatchObject({ body: "bob wrote, cleaned", author: { name: "bob" }, editedBy: { name: "erased" } });
+  });
+
+  test("two replicas that delete different messages at once leave a thread that a moderator can still delete", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const ca = make(a);
+    const t = ca.add({ anchor: cell, body: "one" }, ada);
+    const r = ca.reply(t.id, { body: "two" }, bob);
+    sync(a, b);
+    ca.deleteMessage(t.id, t.messages[0].id, ada);
+    make(b).deleteMessage(t.id, r.id, bob);
+    sync(a, b);
+    expect(code(() => ca.get(t.id))).toBe("CORRUPT");
+    expect(code(() => ca.deleteThread(t.id, ada))).toBe("CORRUPT");
+    expect(ca.deleteThread(t.id, admin)).toEqual({ threadId: t.id });
+    expect(ca.problems()).toEqual([]);
+  });
+
+  test("no principal can take the name of a tombstone, and a tombstone is nobody's to delete", () => {
+    expect(code(() => stamp({ kind: "human", name: "erased" }))).toBe("INVALID_AUTHOR");
+    const c = make();
+    const t = c.add({ anchor: cell, body: "one" }, ada);
+    const r = c.reply(t.id, { body: "two" }, ada);
+    c.erasePerson("ada", ada);
+    expect(code(() => c.deleteMessage(t.id, r.id, ada))).toBe("FORBIDDEN");
+    expect(code(() => c.deleteThread(t.id, ada))).toBe("FORBIDDEN");
+    expect(c.deleteMessage(t.id, r.id, admin).messageId).toBe(r.id);
+  });
+
+  test("copies that disagree on time or kind are not merged, and a forged erased flag is refused", () => {
+    const doc = new Y.Doc();
+    const c = make(doc);
+    const t = c.add({ anchor: cell, body: "one" }, ada);
+    const list = (doc.getMap("comments.threads").get(t.id) as Y.Map<unknown>).get("messages") as Y.Array<unknown>;
+    const first = list.get(0) as Record<string, unknown>;
+    const stamped = { editedAt: "2026-02-01T00:00:00.000Z", editedBy: { kind: "human", name: "ada" } };
+    list.push([{ ...first, ...stamped, at: "2026-03-01T00:00:00.000Z" }]);
+    list.delete(0, 1);
+    list.insert(0, [{ ...first, ...stamped }]);
+    expect(c.problems()).not.toEqual([]);
+    expect(code(() => c.get(t.id))).toBe("CORRUPT");
+    const forged = new Y.Doc();
+    const f = make(forged);
+    const u = f.add({ anchor: cell, body: "real body" }, ada);
+    const fl = (forged.getMap("comments.threads").get(u.id) as Y.Map<unknown>).get("messages") as Y.Array<unknown>;
+    fl.insert(0, [{ ...(fl.get(0) as object), erased: true }]);
+    fl.delete(1, 1);
+    expect(f.problems().length).toBeGreaterThan(0);
+  });
+
+  test("an edit or an erase is not a new message to a notifier", () => {
+    const c = make();
+    const n = new Notifications(c);
+    const seen: string[] = [];
+    n.subscribe((e) => void seen.push(e.type));
+    const t = c.add({ anchor: cell, body: "start" }, ada);
+    const r = c.reply(t.id, { body: "reply" }, bob);
+    c.editMessage(t.id, r.id, { body: "reply, fixed" }, bob);
+    c.erasePerson("bob", bob);
+    expect(seen).toEqual(["thread.created", "message.added"]);
+    n.close();
   });
 });

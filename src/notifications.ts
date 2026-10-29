@@ -205,7 +205,11 @@ export class Notifications {
           if (change) this.statusChanged(String(path[0]), change.oldValue, source);
         } else if (path.length === 2 && path[1] === "messages" && event.target instanceof Y.Array) {
           const ids = new Set<unknown>();
-          for (const item of (event as Y.YArrayEvent<unknown>).changes.added) for (const raw of item.content.getContent()) ids.add((raw as { id?: unknown } | null)?.id);
+          const changes = (event as Y.YArrayEvent<unknown>).changes;
+          // An edit or an erase removes a message and stores it again in one change. That is not a new message.
+          const replaced = new Set<unknown>();
+          for (const item of changes.deleted) for (const raw of item.content.getContent()) replaced.add((raw as { id?: unknown } | null)?.id);
+          for (const item of changes.added) for (const raw of item.content.getContent()) if (!replaced.has((raw as { id?: unknown } | null)?.id)) ids.add((raw as { id?: unknown } | null)?.id);
           this.messagesAdded(String(path[0]), ids, source);
         }
       });

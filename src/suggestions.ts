@@ -1,9 +1,9 @@
 import * as Y from "yjs";
 import type { Anchor, AnchorState } from "./anchor.js";
 import { CommentsError } from "./errors.js";
-import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
+import { assertActor, ERASED_NAME, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown } from "./text.js";
-import { ERASED_NAME, type Comments } from "./threads.js";
+import type { Comments } from "./threads.js";
 import { copy, exact, invalid, strictCopy, validDate } from "./validate.js";
 
 /** The scope that lets an agent accept or reject a suggestion that another principal wrote. */
@@ -101,7 +101,7 @@ interface Decision {
  * Someone who is not a signed-in person decides their own work when the names match, whatever the
  * kinds. A token counts here, because an agent holds it. A signed-in person may decide their own.
  */
-const decidesOwn = (author: Author, decider: Author): boolean => author.kind !== "human" && decider.kind !== "human" && author.name === decider.name;
+const decidesOwn = (author: Author, decider: Author): boolean => author.name !== ERASED_NAME && author.kind !== "human" && decider.kind !== "human" && author.name === decider.name;
 
 /** A client id in its one canonical form: whole digits, no sign, no leading zero, within 32 bits. */
 const clientOf = (text: string): number | undefined => (/^(0|[1-9]\d{0,9})$/.test(text) && Number(text) <= 0xffffffff ? Number(text) : undefined);
@@ -240,29 +240,42 @@ export class Suggestions {
     return { id, fields: this.map.get(id) as Fields };
   }
 
-  /** Every suggestion a person wrote in this document. A person may export their own data. */
-  exportPerson(person: string, actor: Actor): Suggestion[] {
-    const name = this.comments.checkPerson(person, actor);
-    return this.list().filter((s) => s.author.name === name);
+  /** The suggestions a person wrote, and the decisions they made, in this document. A person may export their own data. */
+  exportPerson(person: string, actor: Actor): { authored: Suggestion[]; decided: { id: string; status: "accepted" | "rejected"; at: string }[] } {
+    const { match } = this.comments.checkPerson(person, actor);
+    const all = this.list();
+    return {
+      authored: all.filter((s) => match(s.author)),
+      decided: all.flatMap((s) => (s.decidedBy && s.decidedAt && s.status !== "pending" && match(s.decidedBy) ? [{ id: s.id, status: s.status, at: s.decidedAt }] : [])),
+    };
   }
 
   /**
-   * Give every suggestion a person wrote a tombstone author and drop its summary. The change stays, because
-   * an accepted change is already part of the content. The names of those who decided stay too. Returns the count.
+   * Give every suggestion a person wrote a tombstone author and drop its summary, and give every decision
+   * they made a tombstone decider. The change stays, because an accepted change is already part of the
+   * content. Returns how many suggestions and decisions it changed.
    */
-  erasePerson(person: string, actor: Actor): number {
-    const name = this.comments.checkPerson(person, actor);
-    let count = 0;
+  erasePerson(person: string, actor: Actor): { suggestions: number; decisions: number } {
+    const { match } = this.comments.checkPerson(person, actor);
+    const out = { suggestions: 0, decisions: 0 };
     this.ydoc.transact(() => {
       for (const fields of this.map.values()) {
         const author = fields instanceof Y.Map ? readAuthor(fields.get("author")) : undefined;
-        if (!author || author.name !== name) continue;
+        if (!author || !match(author)) continue;
         fields.set("author", { kind: author.kind, name: ERASED_NAME });
         fields.delete("summary");
-        count++;
+        out.suggestions++;
+      }
+      for (const map of [this.applied, this.rejected]) {
+        for (const [key, raw] of [...map.entries()]) {
+          const by = readAuthor((raw as { by?: unknown } | null)?.by);
+          if (!by || !match(by)) continue;
+          map.set(key, { ...(raw as object), by: { kind: by.kind, name: ERASED_NAME } });
+          out.decisions++;
+        }
       }
     });
-    return count;
+    return out;
   }
 
   /** Propose a change. Anyone can suggest. The host stamps the author. */
