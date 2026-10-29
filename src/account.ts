@@ -57,8 +57,9 @@ function check(subject: Author, deps: CommentsAccountDeps): { documents: Comment
   const ids = new Set<unknown>();
   const seen = new Set<unknown>();
   const bad = (why: string): never => {
-    throw new CommentsError("INVALID_INPUT", `deps.documents: ${why}`);
+    throw new CommentsError("INVALID_INPUT", `deps: ${why}`);
   };
+  if (deps.creators !== undefined && (typeof deps.creators?.exportCreated !== "function" || typeof deps.creators.eraseCreated !== "function")) bad("creators needs exportCreated and eraseCreated");
   for (const d of documents) {
     if (typeof d?.id !== "string" || d.id === "" || ids.has(d.id)) bad("each document needs a unique id");
     if (!(d.comments instanceof Comments) || !(d.suggestions instanceof Suggestions)) bad("each document needs Comments and Suggestions made by this package");

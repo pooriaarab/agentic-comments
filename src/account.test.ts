@@ -85,6 +85,7 @@ describe("commentsAccount", () => {
     expect(await code(() => commentsAccount.exportAccount(ada, { actor: ada } as never))).toBe("INVALID_INPUT");
     expect(await code(() => commentsAccount.eraseAccount(ada, { documents: {}, actor: ada } as never))).toBe("INVALID_INPUT");
     expect(await code(() => commentsAccount.exportAccount({ kind: "human", name: " ada" }, { documents: [], actor: ada }))).toBe("INVALID_INPUT");
+    expect(await code(() => commentsAccount.eraseAccount(ada, { documents: [], actor: ada, creators: {} as never }))).toBe("INVALID_INPUT");
     const bare = { id: "n", comments: { ydoc: undefined, exportPerson() {}, erasePerson() {} }, suggestions: { comments: { ydoc: undefined }, exportPerson() {}, erasePerson() {} } };
     expect(await code(() => commentsAccount.exportAccount(ada, { documents: [bare as never], actor: ada }))).toBe("INVALID_INPUT");
     const d = doc("same");
