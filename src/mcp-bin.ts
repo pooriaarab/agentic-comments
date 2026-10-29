@@ -14,7 +14,7 @@ Start the MCP server on stdio. Set the principal and scopes in the environment, 
   AGENTIC_COMMENTS_FILE=./comments.ydoc   The store file. The default is ./comments.ydoc.
   AGENTIC_COMMENTS_LOCK_TIMEOUT_MS=5000   How long a write waits for another process.
 
-Usage: agentic-comments-mcp [--help | --version]`;
+Usage: agentic-comments-mcp [--as kind:name] [--help | --version]`;
 
 const args = process.argv.slice(2);
 // A value right after `--as` is a principal, never a flag, so `--as -h` does not print help.
