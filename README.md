@@ -6,9 +6,8 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: see [npm](https://www.npmjs.com/package/agentic-comments) for the latest version. Threads,
-> suggestions, anchor survival, a CLI, an MCP server, and a notification stream work in the source. Version
-> 0.1.0 has the library only. The rest arrives in the next release.
+> Status: see [npm](https://www.npmjs.com/package/agentic-comments) for the latest released version. The
+> `main` branch can have changes that npm does not have yet.
 
 ## Install
 
@@ -139,7 +138,7 @@ machine. It cannot check a lock held in another container or on another machine.
 share a volume can have the same process id, and each then clears the other's lock, so they can lose writes. A save that
 would pass 50 MB is refused.
 
-Version 0.1.0 has no CLI or MCP server. They arrive in the next release. Until then, run `npm run build` and
+If the version you install has no `agentic-comments` command, build from source. Run `npm run build` and
 use `node dist/cli.js` where these examples say `npx agentic-comments`.
 
 ```sh
