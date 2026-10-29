@@ -212,6 +212,8 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
+  // A write past a file size limit should fail with an error we can report, not end the process.
+  process.on("SIGXFSZ", () => undefined);
   runCli(process.argv.slice(2), { out: (l) => console.log(l), err: (l) => console.error(l), env: process.env }).then(
     (code) => {
       // A running server (mcp) must keep its stdio handles, so exit only on failure.

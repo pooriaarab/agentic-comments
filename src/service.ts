@@ -21,7 +21,6 @@ export interface ListFilter {
   mentioning?: string;
 }
 
-const CONTEXT = 20;
 const SHOWN = 5;
 
 function anchorFrom(ydoc: Y.Doc, spec: unknown): Anchor {
@@ -42,8 +41,8 @@ function anchorFrom(ydoc: Y.Doc, spec: unknown): Anchor {
     throw new CommentsError("INVALID_ANCHOR", `the quote has ${at.length} matches, not ${String(occurrence)}`);
   }
   if (occurrence === undefined && at.length > 1) {
-    const where = at.slice(0, SHOWN).map((i, n) => `${n + 1}: ...${value.slice(Math.max(0, i - CONTEXT), i + Math.min(quote.length, 60) + CONTEXT).replace(/\s+/g, " ")}...`);
-    throw new CommentsError("INVALID_ANCHOR", `the quote matches ${at.length} places; pass an occurrence. ${where.join(" | ")}${at.length > SHOWN ? " | ..." : ""}`);
+    const offsets = at.slice(0, SHOWN).join(", ");
+    throw new CommentsError("INVALID_ANCHOR", `the quote matches ${at.length} places, at character offsets ${offsets}${at.length > SHOWN ? ", and more" : ""}; pass an occurrence from 1 to ${at.length}`);
   }
   const start = at[(occurrence as number | undefined ? (occurrence as number) - 1 : 0)];
   return textAnchor(text, start, start + quote.length);

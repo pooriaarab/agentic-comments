@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CommentsError } from "./errors.js";
 import type { FileStore } from "./file-store.js";
@@ -9,10 +10,10 @@ import { VERSION } from "./version.js";
 
 const anchor = z
   .discriminatedUnion("type", [
-    z.object({ type: z.literal("text"), quote: z.string().describe("Exact text to anchor to."), occurrence: z.number().int().min(1).optional().describe("Which match, when the quote occurs more than once.") }),
-    z.object({ type: z.literal("cell"), key: z.string() }),
-    z.object({ type: z.literal("slide"), elementId: z.string() }),
-    z.object({ type: z.literal("canvas"), elementId: z.string() }),
+    z.object({ type: z.literal("text"), quote: z.string().describe("Exact text to anchor to."), occurrence: z.number().int().min(1).optional().describe("Which match, when the quote occurs more than once.") }).strict(),
+    z.object({ type: z.literal("cell"), key: z.string() }).strict(),
+    z.object({ type: z.literal("slide"), elementId: z.string() }).strict(),
+    z.object({ type: z.literal("canvas"), elementId: z.string() }).strict(),
   ])
   .describe("Where the thread or suggestion points.");
 
@@ -36,20 +37,17 @@ function failure(error: unknown): { content: { type: "text"; text: string }[]; i
 export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   const service = new CommentsService(store, actor);
   const server = new McpServer({ name: "agentic-comments", version: VERSION });
-  // The SDK checks the input against the shape before the handler runs, so `run` gets clean values.
+  // The SDK serves tools/list from these schemas. Calls go through one handler below, so every input error
+  // comes back as JSON with a code, the same as the CLI, and a key a tool does not list is refused.
+  const tools = new Map<string, { strict: z.ZodTypeAny; run: (input: unknown) => unknown }>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tool = (name: string, description: string, shape: z.ZodRawShape, readOnly: boolean, run: (input: any) => unknown) =>
-    server.registerTool(
-      name,
-      { description, inputSchema: z.object(shape).strict() as never, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } },
-      (async (input: unknown) => {
-        try {
-          return ok(run(input));
-        } catch (error) {
-          return failure(error);
-        }
-      }) as never,
-    );
+  const tool = (name: string, description: string, shape: z.ZodRawShape, readOnly: boolean, run: (input: any) => unknown) => {
+    const strict = z.object(shape).strict();
+    tools.set(name, { strict, run });
+    server.registerTool(name, { description, inputSchema: strict as never, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } }, (() => {
+      throw new Error("calls are handled by the server");
+    }) as never);
+  };
 
   const state = z.enum(["attached", "edited", "orphaned", "unknown"]).optional();
   tool("list_threads", "List comment threads. Each has an anchorState: an orphaned thread lost its content but stays readable.", { status: z.enum(["open", "resolved"]).optional(), anchorState: state, mentioning: z.string().optional() }, true, (i) => service.threads(i));
@@ -63,12 +61,26 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   tool(
     "suggest_change",
     'Suggest a change. For a text anchor the change is {"replace": "new text"}. For another anchor it is {"value": <JSON>}.',
-    { anchor, change: z.union([z.object({ replace: z.string() }), z.object({ value: z.unknown() })]), summary: z.string().optional() },
+    { anchor, change: z.union([z.object({ replace: z.string() }).strict(), z.object({ value: z.unknown() }).strict()]), summary: z.string().optional() },
     false,
     (i) => service.suggest(i),
   );
   tool("accept_suggestion", "Accept a suggestion. Needs the accept scope for an agent, and never works on your own suggestion.", { id }, false, (i) => service.accept(i.id));
   tool("reject_suggestion", "Reject a suggestion. Same rights as accept.", { id }, false, (i) => service.reject(i.id));
+  server.server.setRequestHandler(CallToolRequestSchema, (request) => {
+    const entry = tools.get(request.params.name);
+    if (!entry) return failure(new CommentsError("INVALID_INPUT", `there is no tool named ${JSON.stringify(request.params.name.slice(0, 60))}`));
+    try {
+      const checked = entry.strict.safeParse(request.params.arguments ?? {});
+      if (!checked.success) {
+        const where = checked.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
+        throw new CommentsError("INVALID_INPUT", `the tool input is refused: ${where.slice(0, 400)}`);
+      }
+      return ok(entry.run(checked.data));
+    } catch (error) {
+      return failure(error);
+    }
+  });
   return server;
 }
 

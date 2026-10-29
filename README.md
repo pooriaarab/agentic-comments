@@ -130,7 +130,8 @@ suggestions.accept(s.id, ada);
 Both run on a local store: one file that holds a Yjs document. The text is in the `text` root, and
 non-text values are in the `values` map. A file starts with a hash, so a damaged or zero-filled file is refused and not read as empty. A write
 takes a lock file, saves with a rename, and runs again if the file changed meanwhile, so parallel processes
-lose nothing. A lock left by a dead process, or an empty one older than two seconds, is cleared. A save that
+on one machine lose nothing. A full disk or a file size limit fails the write and leaves the old file. A lock left by a dead process, or an empty one older than two seconds, is cleared. The store is for one
+machine. It cannot check a lock held in another container or on another machine. A save that
 would pass 50 MB is refused.
 
 The package is not published yet. After `npm run build`, run `node dist/cli.js` where these examples say

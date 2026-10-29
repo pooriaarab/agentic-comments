@@ -8,6 +8,6 @@ try {
   const env = process.env;
   await startMcp(new FileStore(env.AGENTIC_COMMENTS_FILE ?? "./comments.ydoc", { lockTimeoutMs: lockTimeoutFrom(env) }), operatorActor(env.AGENTIC_COMMENTS_AS, env.AGENTIC_COMMENTS_SCOPES));
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(JSON.stringify({ error: { code: (error as { code?: string }).code ?? "INTERNAL", message: error instanceof Error ? error.message : String(error) } }));
   process.exit(1);
 }

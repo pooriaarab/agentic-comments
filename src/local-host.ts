@@ -25,12 +25,15 @@ export function valueKey(anchor: { type: string; key?: unknown; elementId?: unkn
  * Any other anchor takes `{ "value": <JSON> }` and sets that key in the values map.
  */
 export const localHost: SuggestionHost = {
-  parse(change) {
+  parse(change, { anchor }) {
     const c = (change ?? {}) as Record<string, unknown>;
     const keys = Object.keys(c);
-    if (keys.length === 1 && keys[0] === "replace" && typeof c.replace === "string" && c.replace.length <= MAX_TEXT) return { replace: c.replace };
+    if (anchor.type === "text") {
+      if (keys.length === 1 && keys[0] === "replace" && typeof c.replace === "string" && c.replace.length <= MAX_TEXT) return { replace: c.replace };
+      return refuse('a change for a text anchor is { "replace": text }');
+    }
     if (keys.length === 1 && keys[0] === "value") return { value: c.value };
-    return refuse('a change is { "replace": text } for a text anchor, or { "value": JSON } for another anchor');
+    return refuse(`a change for a ${anchor.type} anchor is { "value": JSON }`);
   },
 
   apply(change, ctx) {

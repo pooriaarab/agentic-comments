@@ -24,6 +24,23 @@
           "valueHint": "subcommand",
           "value": "mcp"
         }
+      ],
+      "environmentVariables": [
+        {
+          "name": "AGENTIC_COMMENTS_AS",
+          "description": "Who the server acts as, as kind:name. Kinds: human, agent_of_human, agent_of_agent, agent, user_token. Required.",
+          "isRequired": true
+        },
+        {
+          "name": "AGENTIC_COMMENTS_FILE",
+          "description": "The store file. Default ./comments.ydoc.",
+          "isRequired": false
+        },
+        {
+          "name": "AGENTIC_COMMENTS_SCOPES",
+          "description": "Comma list of rights for this principal, such as comments:accept.",
+          "isRequired": false
+        }
       ]
     }
   ]

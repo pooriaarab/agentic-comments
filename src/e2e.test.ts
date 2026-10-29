@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -12,6 +12,9 @@ import { FileStore, MAX_FILE, TEXT_ROOT } from "./local.js";
 //  0b. A zero-filled file loads as empty and the next write erases it, or a save grows a file past what loads.
 //  0c. Two processes clear one stale lock together, or run init together, and a write or a store is lost.
 //  0d. A flag that does not apply to a command is dropped without a word.
+//  0e. A write stops short on a full disk and a cut-off file replaces the store as if all went well.
+//  0f. An MCP input error is plain text, a nested key is dropped, or a bad change is changed into a good one.
+//  0g. A change of the wrong kind for its anchor waits until accept to fail. A quote error repeats document text.
 //  1. A call acts with no principal, a bad kind, or an author or scope the caller picked.
 //  2. init overwrites a store, or another command invents a store that is not there.
 //  3. Two processes write at once and one write is lost.
@@ -279,6 +282,45 @@ describe("the store under stress", () => {
   });
 });
 
+describe("the store under stress 2", () => {
+  test("a write that hits a file size limit fails with STORE_FULL, leaves the store whole, and leaves no temp files", () => {
+    const file = fresh();
+    const made = json(cli(file, ["comment", "--cell", "A1", "--body", "first"], "human:ada"));
+    const before = readFileSync(file);
+    const limit = Math.ceil(before.length / 1024) + 1;
+    const run = spawnSync("bash", ["-c", `ulimit -f ${limit}; exec node "$0" "$@"`, dist("cli.js"), "comment", "--cell", "B2", "--body", "y".repeat(9_000)], { env: env(file, "human:ada"), encoding: "utf8" });
+    expect([run.status, JSON.parse(run.stderr).error.code]).toEqual([1, "STORE_FULL"]);
+    expect(readFileSync(file).equals(before)).toBe(true);
+    expect(readdirSync(dir).filter((n) => n.startsWith(`${file.split("/").pop()}.tmp-`))).toEqual([]);
+    expect(json(cli(file, ["show", made.id], "human:ada")).messages).toHaveLength(1);
+  });
+
+  test("a lock that is no longer ours is not removed when a write ends", () => {
+    const file = fresh();
+    const store = new FileStore(file, { lockTimeoutMs: 0 });
+    store.write(() => {
+      writeFileSync(`${file}.lock`, "999:someone-else");
+    });
+    expect(readFileSync(`${file}.lock`, "utf8")).toBe("999:someone-else");
+  });
+
+  test("a change of the wrong kind for its anchor is refused when it is suggested", () => {
+    const file = fresh();
+    for (const args of [["--text-quote", "hello", "--value", "1"], ["--cell", "A1", "--replace", "x"]]) {
+      const run = cli(file, ["suggest", ...args], "agent:bot");
+      expect([run.code, json(run).error.code]).toEqual([1, "INVALID_INPUT"]);
+    }
+    expect(json(cli(file, ["suggestions"], "human:ada"))).toEqual([]);
+  });
+
+  test("a repeated quote error gives offsets and counts, and no document text", () => {
+    const file = fresh("secret one, secret two");
+    const message = json(cli(file, ["comment", "--text-quote", "secret", "--body", "x"], "human:ada")).error.message;
+    expect(message).toContain("offsets 0, 12");
+    expect(message).not.toContain("one");
+  });
+});
+
 describe("the MCP server", () => {
   async function connect(file: string, as: string, scopes?: string): Promise<Client> {
     const transport = new StdioClientTransport({ command: "node", args: [dist("mcp-bin.js")], env: Object.fromEntries(Object.entries(env(file, as, scopes)).filter(([, v]) => v !== undefined)) as Record<string, string> });
@@ -359,9 +401,31 @@ describe("the MCP server", () => {
     await client.close();
   });
 
+
+  test("an input error is JSON with a code, over the same codes as the CLI, and nested keys and mixed changes are refused", async () => {
+    const client = await connect(fresh(), "agent:bot");
+    const refuse = async (name: string, args: Record<string, unknown>) => {
+      const r = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
+      return { isError: r.isError, error: JSON.parse(r.content[0].text).error };
+    };
+    for (const [name, args] of [
+      ["list_threads", { status: "bogus" }],
+      ["list_threads", { author: { kind: "human", name: "boss" } }],
+      ["add_comment", { anchor: { type: "cell", key: "k", author: "x" }, body: "hi" }],
+      ["add_comment", { anchor: { type: "cell" }, body: "hi" }],
+      ["suggest_change", { anchor: { type: "cell", key: "k" }, change: { value: 2, extra: 1 } }],
+      ["suggest_change", { anchor: { type: "cell", key: "k" }, change: { replace: 5, value: 1 } }],
+    ] as const) {
+      const r = await refuse(name, args as Record<string, unknown>);
+      expect([r.isError, r.error.code]).toEqual([true, "INVALID_INPUT"]);
+    }
+    expect((await call(client, "list_suggestions", {})).value).toEqual([]);
+    await client.close();
+  });
+
   test("it refuses to start with no principal", () => {
     const run = spawnSync("node", [dist("mcp-bin.js")], { env: env(fresh()), encoding: "utf8", timeout: 5_000 });
     expect(run.status).toBe(1);
-    expect(run.stderr).toContain("kind:name");
+    expect(JSON.parse(run.stderr).error.message).toContain("kind:name");
   });
 });

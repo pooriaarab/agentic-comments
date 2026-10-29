@@ -56,8 +56,8 @@ export interface RevertContext {
  * Make every edit in `ydoc`, so it merges with the rest.
  */
 export interface SuggestionHost {
-  /** Check a change when it is suggested. Return the clean change, or throw. */
-  parse?(change: unknown): unknown;
+  /** Check a change when it is suggested, with the anchor it is for. Return the clean change, or throw. */
+  parse?(change: unknown, context: { anchor: Anchor }): unknown;
   /**
    * Make the edit. Throw before you change anything when the edit cannot apply, for example when the
    * anchored content changed. Yjs cannot undo a partial edit. If `apply` edits and then fails, the
@@ -150,11 +150,11 @@ export class Suggestions {
     return this.ydoc.getMap<unknown>(REJECTED);
   }
 
-  private change(raw: unknown): unknown {
+  private change(raw: unknown, anchor: Anchor): unknown {
     let clean: unknown;
     try {
       clean = strictCopy(raw);
-      if (this.host.parse) clean = strictCopy(this.host.parse(copy(clean)));
+      if (this.host.parse) clean = strictCopy(this.host.parse(copy(clean), { anchor: copy(anchor) }));
     } catch (error) {
       return invalid(`the change is refused: ${safeText(error instanceof Error ? error.message : error)}`);
     }
@@ -240,7 +240,7 @@ export class Suggestions {
     const who = assertActor(actor);
     const given = exact(input, ["anchor", "change", "summary"], "a new suggestion");
     const anchor = this.comments.checkAnchor(given.anchor);
-    const change = this.change(given.change);
+    const change = this.change(given.change, anchor);
     const summary = given.summary;
     if (summary !== undefined && !(typeof summary === "string" && summary.trim() !== "" && summary.length <= MAX_SUMMARY && !BODY_FORBIDDEN.test(summary))) {
       invalid(`a summary must be text of 1 to ${MAX_SUMMARY} characters, with no control or invisible characters`);
@@ -290,7 +290,7 @@ export class Suggestions {
           throw new Error(s.anchorState.state === "orphaned" ? "the anchored content is gone" : "the anchored content has changed since the suggestion was made");
         }
         this.comments.checkAnchor(s.anchor);
-        const change = this.change(s.change);
+        const change = this.change(s.change, s.anchor);
         receipt = this.host.apply(change, { suggestionId: id, anchor: copy(s.anchor), author: Object.freeze({ ...s.author }), by: Object.freeze({ ...by }), ydoc: this.ydoc });
         if (thenable(receipt)) throw new Error("apply must finish at once and cannot return a promise");
         receipt = receipt === undefined ? null : strictCopy(receipt);

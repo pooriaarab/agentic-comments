@@ -57,14 +57,37 @@ function decode(bytes: Buffer, path: string): Y.Doc {
   return ydoc;
 }
 
-function writeDurably(path: string, data: Buffer): void {
-  const handle = openSync(path, "wx");
-  try {
-    writeSync(handle, data);
-    fsyncSync(handle);
-  } finally {
-    closeSync(handle);
+/** Write every byte. A write can stop short on a full disk or a size limit, and that must not pass as success. */
+function writeAll(handle: number, data: Buffer): void {
+  let done = 0;
+  while (done < data.length) {
+    const wrote = writeSync(handle, data, done, data.length - done);
+    if (wrote <= 0) throw Object.assign(new Error("a write made no progress"), { code: "ENOSPC" });
+    done += wrote;
   }
+}
+
+const FULL = new Set(["ENOSPC", "EFBIG", "EDQUOT"]);
+
+/** Write a file in full, sync it, and remove it when anything fails. A full disk becomes STORE_FULL. */
+function writeDurably(path: string, data: Buffer): void {
+  let handle: number | undefined;
+  try {
+    handle = openSync(path, "wx");
+    writeAll(handle, data);
+    fsyncSync(handle);
+  } catch (error) {
+    if (handle !== undefined) closeSync(handle);
+    handle = undefined;
+    try {
+      unlinkSync(path);
+    } catch {
+      /* never created */
+    }
+    if (FULL.has((error as NodeJS.ErrnoException).code ?? "")) throw new CommentsError("STORE_FULL", "the file could not be written: the disk is full or a file size limit applies");
+    throw error;
+  }
+  closeSync(handle);
 }
 
 function syncDirectory(path: string): void {
@@ -88,7 +111,8 @@ const identity = (path: string): string => {
 /**
  * One file that holds a Yjs document, with a hash so damage is seen. A write takes a lock file, loads the
  * newest state, runs, and saves with a rename. If the file changed while it ran, it runs again on the new
- * state, so two writers do not lose each other's work even when a lock is wrongly cleared.
+ * state. This is built for processes on one machine that share one process table. A lock held across
+ * containers or machines cannot be checked for a dead holder.
  */
 export class FileStore {
   readonly path: string;
@@ -133,13 +157,13 @@ export class FileStore {
     return fn(this.load().ydoc);
   }
 
-  private acquire(lock: string): void {
+  private acquire(lock: string, mine: string): void {
     const deadline = Date.now() + this.lockTimeoutMs;
     for (;;) {
       try {
         const handle = openSync(lock, "wx");
         try {
-          writeSync(handle, String(process.pid));
+          writeAll(handle, Buffer.from(mine));
         } finally {
           closeSync(handle);
         }
@@ -168,8 +192,8 @@ export class FileStore {
     } catch (error) {
       return (error as NodeJS.ErrnoException).code === "ENOENT";
     }
-    const pid = Number(held);
-    const dead = /^\d{1,10}$/.test(held) && pid > 0 && !alive(pid);
+    const pid = Number(held.split(":")[0]);
+    const dead = /^\d{1,10}(:[\w-]{1,64})?$/.test(held) && pid > 0 && !alive(pid);
     if (!dead && !(held === "" && age > EMPTY_LOCK_MS)) return false;
     const tomb = `${lock}.stale-${process.pid}-${globalThis.crypto.randomUUID()}`;
     try {
@@ -201,7 +225,8 @@ export class FileStore {
   /** Lock, load the newest state, run `fn`, and save. When `fn` throws, nothing is saved. */
   write<T>(fn: (ydoc: Y.Doc) => T): T {
     const lock = `${this.path}.lock`;
-    this.acquire(lock);
+    const mine = `${process.pid}:${globalThis.crypto.randomUUID()}`;
+    this.acquire(lock, mine);
     try {
       for (let attempt = 1; ; attempt++) {
         const { ydoc, seen } = this.load();
@@ -214,13 +239,18 @@ export class FileStore {
         }
         const temporary = `${this.path}.tmp-${process.pid}-${globalThis.crypto.randomUUID()}`;
         writeDurably(temporary, data);
-        renameSync(temporary, this.path);
+        try {
+          renameSync(temporary, this.path);
+        } catch (error) {
+          unlinkSync(temporary);
+          throw error;
+        }
         syncDirectory(this.path);
         return result;
       }
     } finally {
       try {
-        unlinkSync(lock);
+        if (readFileSync(lock, "utf8") === mine) unlinkSync(lock);
       } catch {
         /* already gone */
       }
