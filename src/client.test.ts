@@ -137,6 +137,24 @@ describe("createClient against the Worker handler", () => {
     expect(() => createClient({ baseUrl: "https://x.test", token: "" })).toThrow(TypeError);
   });
 
+  test("a custom fetch runs with no this, never retries, and never follows a redirect", async () => {
+    const calls: { self: unknown; init: RequestInit }[] = [];
+    const plain = function (this: unknown, _input: string, init: RequestInit) {
+      calls.push({ self: this, init });
+      return Promise.resolve(new Response(JSON.stringify({ error: { code: "CONFLICT", message: "try again" } }), { status: 409 }));
+    };
+    const client = createClient({ baseUrl: "https://c.test", token: ADA, fetch: plain as never });
+    expect((await refusal(client.createDocument({ id: "d1" }))).code).toBe("CONFLICT");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.self).toBeUndefined();
+    expect(calls[0]?.init.redirect).toBe("manual");
+  });
+
+  test("a me reply with an unknown kind fails as UNKNOWN", async () => {
+    const odd = createClient({ baseUrl: "https://c.test", token: ADA, fetch: (async () => Response.json({ kind: "robot", name: "r", scopes: [] })) as never });
+    expect((await refusal(odd.me())).code).toBe("UNKNOWN");
+  });
+
   test("an aborted call rejects with the signal reason", async () => {
     const { as } = setup();
     const controller = new AbortController();

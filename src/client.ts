@@ -112,10 +112,12 @@ export interface CommentsClient {
 // answer 200 with any body.
 type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions";
 
+// A local list keeps agentic-identity out of the client bundle. The Record type fails the build if a kind is added.
+const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isString = (v: unknown) => typeof v === "string";
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
-  me: (v) => isObject(v) && isString(v.kind) && isString(v.name) && Array.isArray(v.scopes),
+  me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
   created: (v) => isObject(v) && isString(v.id),
   document: (v) => isObject(v) && isString(v.id) && isString(v.text),
   thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages),
@@ -140,8 +142,11 @@ export function createClient(options: ClientOptions): CommentsClient {
   }
   const root = `${origin.origin}${origin.pathname.replace(/\/+$/, "")}/api/v1`;
   const token = options.token;
-  // Read at call time so a test can swap the global. A custom fetch is called as a plain function.
-  const send = (input: string, init: RequestInit) => (options.fetch === undefined ? globalThis.fetch(input, init) : options.fetch(input, init));
+  // Read at call time so a test can swap the global. A custom fetch is called as a plain function, with no `this`.
+  const send = (input: string, init: RequestInit) => {
+    const run = options.fetch ?? globalThis.fetch;
+    return run(input, init);
+  };
   // A segment of "", ".", or ".." is dropped or resolved by the URL parser, so the call would go to
   // another route. Refuse it, with its encoded forms.
   const seg = (value: string): string => {

@@ -246,7 +246,7 @@ curl -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
 ## HTTP client
 
 `agentic-comments/client` is a typed client for the Worker routes. It uses only `fetch`, so it runs in browsers,
-Workers, and Node 22.
+Workers, and Node.
 
 ```ts
 import { createClient, CommentsApiError } from "agentic-comments/client";
@@ -268,7 +268,7 @@ try {
 - The client never sends an author. The Worker stamps one from the token.
 - A failed call throws `CommentsApiError`. `code` is the API error code, or `UNKNOWN` when the reply is not an API
   error. `status` is the HTTP status. A `200` reply with the wrong shape also fails as `UNKNOWN`.
-- The client never follows a redirect and never retries. A write that you abort after it is sent may still apply:
+- The client never follows a redirect and never retries. A write that you abort after the client sends it can still apply:
   read the thread before you try again.
 
 ## Live demo
