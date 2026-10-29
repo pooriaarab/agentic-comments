@@ -115,6 +115,8 @@ describe("the command line", () => {
     const refused = cli(file, ["edit-message", made.id, "--message", mine, "--body", "hacked"], "human:bob");
     expect([refused.code, json(refused).error.code]).toEqual([1, "FORBIDDEN"]);
     expect(json(cli(file, ["edit-message", made.id, "--message", mine, "--body", "ada fixed"], "human:ada")).editedBy).toEqual({ kind: "human", name: "ada" });
+    const noName = cli(file, ["export-person"], "human:ada");
+    expect([noName.code, json(noName).error.message]).toEqual([2, "export-person needs the name of a person"]);
     const noFlag = cli(file, ["edit-message", made.id, "--body", "x"], "human:ada");
     expect([noFlag.code, json(noFlag).error.code]).toEqual([2, "USAGE"]);
     expect(json(cli(file, ["export-person", "ada"], "human:ada")).threads[0].messages[0].body).toBe("ada fixed");
@@ -491,7 +493,7 @@ describe("the MCP server", () => {
     expect((await call(root, "delete_thread", { id })).value).toEqual({ threadId: id });
     expect((await call(root, "list_threads", {})).value).toEqual([]);
     const { tools } = await ada.listTools();
-    for (const name of ["delete_message", "delete_thread", "erase_person"]) expect(tools.find((t) => t.name === name)?.annotations?.destructiveHint).toBe(true);
+    for (const name of ["edit_message", "delete_message", "delete_thread", "erase_person"]) expect(tools.find((t) => t.name === name)?.annotations?.destructiveHint).toBe(true);
     for (const c of [ada, bob, root]) await c.close();
   });
 

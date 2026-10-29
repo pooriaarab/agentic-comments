@@ -143,8 +143,10 @@ const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   message: (v) => isObject(v) && isString(v.id) && isString(v.body) && isObject(v.author),
   suggestion: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isString(v.status) && isObject(v.author),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
-  deleted: (v) => isObject(v) && isString(v.threadId),
-  person: (v) => isObject(v) && isString(v.person) && Array.isArray(v.threads) && isObject(v.suggestions) && Array.isArray(v.suggestions.authored),
+  deleted: (v) => isObject(v) && isString(v.threadId) && (v.messageId === undefined || isString(v.messageId)),
+  person: (v) =>
+    isObject(v) && isString(v.person) && Array.isArray(v.threads) && Array.isArray(v.edits) && typeof v.unread === "number" &&
+    isObject(v.suggestions) && Array.isArray(v.suggestions.authored) && Array.isArray(v.suggestions.decided) && typeof v.suggestions.unread === "number",
   erased: (v) => isObject(v) && ["messages", "statuses", "edits", "suggestions", "decisions"].every((k) => typeof v[k] === "number"),
 };
 

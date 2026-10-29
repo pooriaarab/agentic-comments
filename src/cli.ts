@@ -128,6 +128,11 @@ function need(p: Parsed): string {
   return p.id;
 }
 
+function needName(p: Parsed): string {
+  if (p.id === undefined) throw new UsageError(`${p.command} needs the name of a person`);
+  return p.id;
+}
+
 function flag(p: Parsed, name: string): string {
   const value = p.flags[name];
   if (value === undefined) throw new UsageError(`${p.command} needs ${name}`);
@@ -200,8 +205,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       : p.command === "edit-message" ? service.editMessage(need(p), flag(p, "--message"), { body: p.flags["--body"], ...(mentions ? { mentions } : {}) })
       : p.command === "delete-message" ? service.deleteMessage(need(p), flag(p, "--message"))
       : p.command === "delete-thread" ? service.deleteThread(need(p))
-      : p.command === "export-person" ? service.exportPerson(need(p))
-      : p.command === "erase-person" ? service.erasePerson(need(p))
+      : p.command === "export-person" ? service.exportPerson(needName(p))
+      : p.command === "erase-person" ? service.erasePerson(needName(p))
       : p.command === "resolve" ? service.resolve(need(p))
       : p.command === "reopen" ? service.reopen(need(p))
       : p.command === "relocate" ? service.relocate(need(p))

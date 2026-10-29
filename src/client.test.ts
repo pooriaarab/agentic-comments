@@ -195,3 +195,13 @@ describe("lifecycle methods", () => {
     expect(seen).toHaveLength(0);
   });
 });
+
+describe("lifecycle reply shapes", () => {
+  test("a 200 reply with a partial shape fails as UNKNOWN", async () => {
+    const reply = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const as = (body: unknown) => createClient({ baseUrl: "https://comments.test", token: ADA, fetch: reply(body) });
+    expect((await refusal(as({ person: "ada", threads: [], suggestions: { authored: [] } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ messages: 1 }).erasePerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ok: true }).deleteThread("d1", "t"))).code).toBe("UNKNOWN");
+  });
+});

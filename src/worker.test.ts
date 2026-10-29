@@ -192,3 +192,28 @@ describe("edit, delete, export, and erase", () => {
     expect((await call(BOSS, "DELETE", "/docs/d1/people/scribe")).json).toEqual({ messages: 1, statuses: 0, edits: 0, suggestions: 0, decisions: 0 });
   });
 });
+
+describe("lifecycle errors and counts", () => {
+  test("a resolved thread refuses an edit, the last message stays, and a tombstone name is refused", async () => {
+    const { call } = await seeded();
+    const made = (await call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: "A1" }, body: "ada here" })).json;
+    const path = `/docs/d1/threads/${made.id}/messages/${made.messages[0].id}`;
+    expect((await call(ADA, "DELETE", path)).status).toBe(400);
+    await call(ADA, "POST", `/docs/d1/threads/${made.id}/resolve`);
+    const late = await call(ADA, "PATCH", path, { body: "x" });
+    expect([late.status, late.json.error.code]).toEqual([409, "THREAD_RESOLVED"]);
+    expect((await call(BOSS, "GET", "/docs/d1/people/erased/export")).status).toBe(400);
+    const odd = await call(BOSS, "GET", "/docs/d1/people/a%2Fb/export");
+    expect([odd.status, odd.json.person, odd.json.threads]).toEqual([200, "a/b", []]);
+  });
+
+  test("erase counts suggestions and decisions, and export shows them", async () => {
+    const { call } = await seeded();
+    const s = (await call(BOT, "POST", "/docs/d1/suggestions", { anchor: { type: "text", quote: "quick" }, change: { replace: "slow" }, summary: "bot idea" })).json;
+    expect((await call(ADA, "POST", `/docs/d1/suggestions/${s.id}/reject`)).status).toBe(200);
+    const out = (await call(ADA, "GET", "/docs/d1/people/ada/export")).json;
+    expect([out.suggestions.decided.length, out.unread, out.suggestions.unread]).toEqual([1, 0, 0]);
+    expect((await call(BOT, "DELETE", "/docs/d1/people/scribe")).json).toMatchObject({ suggestions: 1, decisions: 0 });
+    expect((await call(ADA, "DELETE", "/docs/d1/people/ada")).json).toMatchObject({ suggestions: 0, decisions: 1 });
+  });
+});

@@ -59,7 +59,7 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   tool("resolve_thread", "Resolve a thread.", { id }, false, (i) => service.resolve(i.id));
   tool("reopen_thread", "Reopen a resolved thread.", { id }, false, (i) => service.reopen(i.id));
   tool("relocate_thread", "Move a text anchor to its quote when the quote occurs exactly once.", { id }, false, (i) => service.relocate(i.id));
-  tool("edit_message", "Change the body of a message you wrote. Needs the moderate scope for another person's message.", { id, messageId, body, mentions }, false, (i) => service.editMessage(i.id, i.messageId, { body: i.body, mentions: i.mentions }));
+  tool("edit_message", "Change the body of a message you wrote. Needs the moderate scope for another person's message.", { id, messageId, body, mentions }, false, (i) => service.editMessage(i.id, i.messageId, { body: i.body, mentions: i.mentions }), true);
   tool("delete_message", "Delete a message you wrote. The last message of a thread stays: delete the thread instead.", { id, messageId }, false, (i) => service.deleteMessage(i.id, i.messageId), true);
   tool("delete_thread", "Delete a thread. Works while every message is yours. Otherwise it needs the moderate scope.", { id }, false, (i) => service.deleteThread(i.id), true);
   tool("export_person", "Export the messages, status changes, and suggestions one person wrote. Your own, or any with the moderate scope.", { person }, true, (i) => service.exportPerson(i.person));

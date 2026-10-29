@@ -256,7 +256,8 @@ Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document ro
 | `comments:admin` | Also let an agent accept or reject (the `comments:accept` right), and edit, delete, export, or erase what another person wrote (the `comments:moderate` right). |
 
 With `comments:comment` a principal edits and deletes its own messages, deletes a thread when every message is
-its own, and exports or erases its own data. `read` cannot change anything.
+its own, and erases its own data. With `comments:read` it can export its own data, and it cannot change anything.
+Export of another person's data and any change to another person's words need `comments:admin`.
 
 | Route | Action |
 | --- | --- |
@@ -269,8 +270,8 @@ its own, and exports or erases its own data. `read` cannot change anything.
 | `POST .../threads/:id/resolve`, `reopen`, `relocate` | Change a thread. |
 | `PATCH`, `DELETE .../threads/:id/messages/:message` | Edit (`{body, mentions?}`) or delete a message. |
 | `DELETE .../threads/:id` | Delete a thread. |
-| `GET .../people/:name/export` | Export what a person wrote in this document. |
-| `DELETE .../people/:name` | Erase what a person wrote in this document: replace it with a tombstone. |
+| `GET .../people/:name/export` | Export what a person wrote in this document (`comments:read` for yourself, `comments:admin` for anyone). |
+| `DELETE .../people/:name` | Erase what a person wrote in this document: replace it with a tombstone (`comments:comment` for yourself, `comments:admin` for anyone). |
 | `GET`, `POST /api/v1/docs/:doc/suggestions` | List or suggest. |
 | `POST .../suggestions/:id/accept`, `reject` | Decide. An agent never decides its own suggestion. |
 
