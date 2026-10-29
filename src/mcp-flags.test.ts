@@ -74,7 +74,7 @@ describe("--as sets the principal of the MCP bin", () => {
     expect(await runWithPrincipalFlag(["--as", "human:ada"], { AGENTIC_COMMENTS_AS: "nope" })).toEqual({ code: 0, err: "" });
   });
 
-  test.each([[["--as"]], [["--as", "nope"]]])("%j fails closed with INVALID_AUTHOR, exit 1 within 5 s, even with a valid variable", async (args) => {
+  test.each([[["--as"]], [["--as", "nope"]], [["--as", "-h"]]])("%j fails closed with INVALID_AUTHOR, exit 1 within 5 s, even with a valid variable", async (args) => {
     const r = await runWithPrincipalFlag(args, valid);
     expect(r.code).toBe(1);
     expect(r.err).toContain("INVALID_AUTHOR");

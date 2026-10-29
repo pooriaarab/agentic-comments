@@ -17,9 +17,11 @@ Start the MCP server on stdio. Set the principal and scopes in the environment, 
 Usage: agentic-comments-mcp [--help | --version]`;
 
 const args = process.argv.slice(2);
-if (args.includes("--help") || args.includes("-h")) {
+// A value right after `--as` is a principal, never a flag, so `--as -h` does not print help.
+const flags = args.filter((arg, i) => args[i - 1] !== "--as");
+if (flags.includes("--help") || flags.includes("-h")) {
   console.log(MCP_HELP);
-} else if (args.includes("--version") || args.includes("-V") || args.includes("-v")) {
+} else if (flags.includes("--version") || flags.includes("-V") || flags.includes("-v")) {
   console.log(VERSION);
 } else {
   // `--as` is one flag with a separate value, as in the CLI. A repeated `--as`, or `--as=...`, is refused, never guessed.
