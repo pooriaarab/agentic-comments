@@ -1,8 +1,8 @@
+import { PRINCIPAL_KINDS, type PrincipalKind } from "agentic-identity";
 import { CommentsError } from "./errors.js";
 import { HIDDEN, VARIATION } from "./text.js";
 
-export const PRINCIPAL_KINDS = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"] as const;
-export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
+export { PRINCIPAL_KINDS, type PrincipalKind };
 
 /** What a thread keeps about who wrote a message. Scopes never reach storage. */
 export interface Author {
