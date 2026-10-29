@@ -444,13 +444,13 @@ cd agentic-comments
 npm install && npm run dev
 ```
 
-`bun install && bun run dev` works too. The `dev` script builds the package, then starts `wrangler dev` on <http://localhost:8794>. Wrangler keeps a local D1 database and sends no telemetry.
+`bun install && bun run dev` also works. The `dev` script builds the package, then starts `wrangler dev` on <http://localhost:8794>. Wrangler keeps a local D1 database. It sends no telemetry.
 
 ```sh
 curl -i http://localhost:8794/health   # 200
 ```
 
-`npm run dev:smoke` does the same check by itself: it starts the dev server, waits for `/health` to answer 200, and stops the server. CI runs it as the "dev smoke" step. Each agentic package uses its own default port, so two dev servers can run side by side. To use another port, run `npx wrangler dev --port <n>`.
+`npm run dev:smoke` runs the same check by itself. It starts the dev server. It waits for `/health` to answer 200. It stops the server. CI runs it as the "dev smoke" step. To use another port, change `--port` in the `dev` script.
 
 ## Develop
 
