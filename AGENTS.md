@@ -38,7 +38,8 @@ The same change has the same event `id` on every replica. Check `source` before 
 `agentic-comments mcp` starts the MCP server. The operator sets the principal and scopes when it starts.
 You do not pass them. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`,
 `resolve_thread`, `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`,
-`accept_suggestion`, `reject_suggestion`. A text change is `{"replace": "..."}`. A cell, slide, or canvas
+`accept_suggestion`, `reject_suggestion`, `edit_message`, `delete_message`, `delete_thread`, `export_person`,
+`erase_person`. A text change is `{"replace": "..."}`. A cell, slide, or canvas
 change is `{"value": <JSON>}`. A tool error is JSON with a `code`.
 
 ## Anchors

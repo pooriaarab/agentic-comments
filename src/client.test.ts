@@ -205,5 +205,10 @@ describe("lifecycle reply shapes", () => {
     expect((await refusal(as({ ok: true }).deleteThread("d1", "t"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ threadId: "t" }).deleteMessage("d1", "t", "m"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ person: "ada", exportedAt: 1, threads: [], edits: [], unread: 0, suggestions: { authored: [], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    const partial = { person: "ada", exportedAt: "x", threads: [], edits: [], unread: 0, suggestions: { authored: [], decided: [], unread: 0 } };
+    expect((await refusal(as({ ...partial, threads: [{}] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, edits: [null] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, suggestions: { authored: [1], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, suggestions: { authored: [], decided: [{ id: "s", status: "pending", at: "x" }], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
   });
 });

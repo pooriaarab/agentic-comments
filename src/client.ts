@@ -134,6 +134,10 @@ type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | 
 const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isString = (v: unknown) => typeof v === "string";
+// One thread in an export. It reads SHAPES.message at call time, so it can sit above SHAPES.
+const personThread = (v: unknown) =>
+  isObject(v) && isString(v.threadId) && isObject(v.anchor) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) &&
+  (v.statusChange === undefined || isObject(v.statusChange));
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
   created: (v) => isObject(v) && isString(v.id),
@@ -146,8 +150,11 @@ const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   deletedMessage: (v) => isObject(v) && isString(v.threadId) && isString(v.messageId),
   deletedThread: (v) => isObject(v) && isString(v.threadId),
   person: (v) =>
-    isObject(v) && isString(v.person) && isString(v.exportedAt) && Array.isArray(v.threads) && Array.isArray(v.edits) && typeof v.unread === "number" &&
-    isObject(v.suggestions) && Array.isArray(v.suggestions.authored) && Array.isArray(v.suggestions.decided) && typeof v.suggestions.unread === "number",
+    isObject(v) && isString(v.person) && isString(v.exportedAt) && Array.isArray(v.threads) && v.threads.every(personThread) &&
+    Array.isArray(v.edits) && v.edits.every((e) => isObject(e) && isString(e.threadId) && isString(e.messageId) && isString(e.at)) && typeof v.unread === "number" &&
+    isObject(v.suggestions) && Array.isArray(v.suggestions.authored) && v.suggestions.authored.every(SHAPES.suggestion) &&
+    Array.isArray(v.suggestions.decided) && v.suggestions.decided.every((d) => isObject(d) && isString(d.id) && (d.status === "accepted" || d.status === "rejected") && isString(d.at)) &&
+    typeof v.suggestions.unread === "number",
   erased: (v) => isObject(v) && ["messages", "statuses", "edits", "suggestions", "decisions"].every((k) => typeof v[k] === "number"),
 };
 
