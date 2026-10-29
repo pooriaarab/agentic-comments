@@ -19,6 +19,9 @@ const thread = comments.add({ anchor: { type: "cell", key: "Sheet1!B4" }, body: 
 comments.reply(thread.id, { body: "Fixed." }, actor);
 ```
 
+Check `thread.anchorState`. An `orphaned` thread has lost its content. Read it, reply, or call
+`comments.relocate(id, actor)`. Do not treat it as bad data.
+
 Suggest a change with `suggestions.add({ anchor, change, summary }, actor)`. Accept needs a person or
 the `comments:accept` scope. You never accept or reject your own suggestion.
 

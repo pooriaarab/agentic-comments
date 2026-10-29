@@ -8,7 +8,8 @@ export type CommentsErrorCode =
   | "NO_SUGGESTION"
   | "FORBIDDEN"
   | "ALREADY_DECIDED"
-  | "APPLY_FAILED";
+  | "APPLY_FAILED"
+  | "RELOCATE_FAILED";
 
 export class CommentsError extends Error {
   constructor(

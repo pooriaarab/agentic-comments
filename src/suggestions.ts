@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import type { Anchor } from "./anchor.js";
+import type { Anchor, AnchorState } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown } from "./text.js";
@@ -19,6 +19,8 @@ const REJECTED = "comments.suggestion-rejected";
 export interface Suggestion {
   id: string;
   anchor: Anchor;
+  /** Whether the anchored content is still there. Accept refuses an orphaned or edited one. */
+  anchorState: AnchorState;
   /** What the host app proposes. This package never reads it. The host's `apply` does. */
   change: unknown;
   summary?: string;
@@ -84,6 +86,7 @@ export interface NewSuggestion {
 
 export interface SuggestionFilter {
   status?: Suggestion["status"];
+  anchorState?: AnchorState["state"];
 }
 
 type Fields = Y.Map<unknown>;
@@ -210,9 +213,11 @@ export class Suggestions {
       const won = this.records(indexes.applied.get(id) ?? [], id, author)[0];
       const refused = this.records(indexes.rejected.get(id) ?? [], id, author)[0];
       const decision = won ? { status: "accepted" as const, ...won } : refused ? { status: "rejected" as const, ...refused } : undefined;
+      const anchor = this.comments.parseAnchor(fields.get("anchor"));
       return {
         id,
-        anchor: this.comments.parseAnchor(fields.get("anchor")),
+        anchor,
+        anchorState: this.comments.anchorState(anchor),
         change: copy(change),
         ...(summary === undefined ? {} : { summary }),
         author,
@@ -281,6 +286,9 @@ export class Suggestions {
       let receipt: unknown = null;
       let failure: unknown;
       try {
+        if (s.anchorState.state === "orphaned" || s.anchorState.state === "edited") {
+          throw new Error(s.anchorState.state === "orphaned" ? "the anchored content is gone" : "the anchored content has changed since the suggestion was made");
+        }
         this.comments.checkAnchor(s.anchor);
         const change = this.change(s.change);
         receipt = this.host.apply(change, { suggestionId: id, anchor: copy(s.anchor), author: Object.freeze({ ...s.author }), by: Object.freeze({ ...by }), ydoc: this.ydoc });
@@ -320,10 +328,12 @@ export class Suggestions {
 
   /** In the order they were made. A malformed suggestion is skipped, and `problems()` names it. */
   list(filter: SuggestionFilter = {}): Suggestion[] {
-    const given = exact(filter, ["status"], "a filter");
+    const given = exact(filter, ["status", "anchorState"], "a filter");
+    if (given.anchorState !== undefined && !["attached", "edited", "orphaned", "unknown"].includes(given.anchorState as string)) invalid("anchorState must be attached, edited, orphaned, or unknown");
     if (given.status !== undefined && !["pending", "accepted", "rejected"].includes(given.status as string)) invalid("status must be pending, accepted, or rejected");
     return this.readAll()
       .suggestions.filter((s) => given.status === undefined || s.status === given.status)
+      .filter((s) => given.anchorState === undefined || s.anchorState.state === given.anchorState)
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 

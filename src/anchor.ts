@@ -46,6 +46,13 @@ export interface AnchorKind {
   parse(raw: Record<string, unknown>): { type: string };
 }
 
+/**
+ * Whether the content under an anchor is still there.
+ * `attached`: yes, as it was. `edited`: the range is there, with other text. `orphaned`: the content is
+ * gone. `unknown`: nothing can tell, as for a cell with no host answer.
+ */
+export type AnchorState = { state: "attached" } | { state: "edited"; currentText: string } | { state: "orphaned" } | { state: "unknown" };
+
 export const MAX_QUOTE = 2_000;
 /** The most JSON characters one stored anchor holds. */
 export const MAX_ANCHOR = 4_096;
@@ -123,4 +130,34 @@ export function textAnchor(type: Y.Text | Y.XmlText, from: number, to: number): 
     if (error instanceof CommentsError) throw error;
     throw new CommentsError("INVALID_ANCHOR", `the text cannot be anchored: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function place(json: RelativePositionJson, ydoc: Y.Doc) {
+  try {
+    return Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(json), ydoc);
+  } catch {
+    return null;
+  }
+}
+
+/** Where a text anchor sits now. Null when its text type is gone or the positions point outside this document. */
+export function textRange(anchor: TextAnchor, ydoc: Y.Doc): { type: Y.Text; from: number; to: number } | null {
+  const from = place(anchor.start, ydoc);
+  const to = place(anchor.end, ydoc);
+  if (!from || !to || !(from.type instanceof Y.Text) || to.type !== from.type) return null;
+  return { type: from.type, from: from.index, to: to.index };
+}
+
+export function textState(anchor: TextAnchor, ydoc: Y.Doc): AnchorState {
+  const range = textRange(anchor, ydoc);
+  if (!range || range.to <= range.from) return { state: "orphaned" };
+  const current = textOf(range.type).slice(range.from, range.to);
+  return current === anchor.text ? { state: "attached" } : { state: "edited", currentText: current.slice(0, MAX_QUOTE) };
+}
+
+/** The one place in a text where the quote occurs. Undefined when it occurs never, or more than once. */
+export function onlyOccurrence(type: Y.Text, quote: string): number | undefined {
+  const value = textOf(type);
+  const first = value.indexOf(quote);
+  return first >= 0 && value.indexOf(quote, first + 1) < 0 ? first : undefined;
 }
