@@ -4,13 +4,13 @@
 import type { AnchorSpec, ListFilter } from "./service.js";
 import type { CommentsErrorCode } from "./errors.js";
 import type { PrincipalKind } from "./principal.js";
-import type { Suggestion } from "./suggestions.js";
-import type { Message, NewReply, Thread } from "./threads.js";
+import type { PersonSuggestions, Suggestion } from "./suggestions.js";
+import type { Message, NewReply, PersonExport, Thread } from "./threads.js";
 
 export type { AnchorSpec, ListFilter } from "./service.js";
 export type { CommentsErrorCode } from "./errors.js";
-export type { Message, NewReply, Thread } from "./threads.js";
-export type { Suggestion } from "./suggestions.js";
+export type { Message, NewReply, PersonExport, Thread } from "./threads.js";
+export type { PersonSuggestions, Suggestion } from "./suggestions.js";
 export type { PrincipalKind } from "./principal.js";
 
 /** Codes the comment rules return, plus the ones the Worker and its auth return. */
@@ -92,6 +92,18 @@ export interface Me {
 export type ThreadFilter = ListFilter;
 export type SuggestionListFilter = Pick<ListFilter, "status" | "anchorState">;
 
+/** What `exportPerson` returns: the messages and status changes of one person, and their suggestions. */
+export type PersonData = PersonExport & { suggestions: PersonSuggestions };
+
+/** What `erasePerson` changed in one document. */
+export interface Erased {
+  messages: number;
+  statuses: number;
+  edits: number;
+  suggestions: number;
+  decisions: number;
+}
+
 export interface CommentsClient {
   me(options?: CallOptions): Promise<Me>;
   createDocument(input: { id: string; text?: string }, options?: CallOptions): Promise<{ id: string }>;
@@ -103,6 +115,11 @@ export interface CommentsClient {
   resolve(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
   reopen(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
   relocate(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
+  editMessage(docId: string, threadId: string, messageId: string, input: { body: string; mentions?: string[] }, options?: CallOptions): Promise<Message>;
+  deleteMessage(docId: string, threadId: string, messageId: string, options?: CallOptions): Promise<{ threadId: string; messageId: string }>;
+  deleteThread(docId: string, threadId: string, options?: CallOptions): Promise<{ threadId: string }>;
+  exportPerson(docId: string, person: string, options?: CallOptions): Promise<PersonData>;
+  erasePerson(docId: string, person: string, options?: CallOptions): Promise<Erased>;
   listSuggestions(docId: string, filter?: SuggestionListFilter, options?: CallOptions): Promise<Suggestion[]>;
   suggest(docId: string, input: { anchor: AnchorSpec; change: unknown; summary?: string }, options?: CallOptions): Promise<Suggestion>;
   accept(docId: string, suggestionId: string, options?: CallOptions): Promise<Suggestion>;
@@ -111,21 +128,40 @@ export interface CommentsClient {
 
 // A success reply must have the expected shape, or the call fails. A proxy or a wrong baseUrl can
 // answer 200 with any body.
-type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions";
+type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions" | "deletedMessage" | "deletedThread" | "person" | "erased";
 
 // A local list keeps agentic-identity out of the client bundle. The Record type fails the build if a kind is added.
 const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isString = (v: unknown) => typeof v === "string";
+const isAuthor = (v: unknown) => isObject(v) && typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind) && isString(v.name);
+// One thread in an export. It reads SHAPES.message at call time, so it can sit above SHAPES.
+const personThread = (v: unknown) =>
+  isObject(v) && isString(v.threadId) && isObject(v.anchor) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) &&
+  (v.statusChange === undefined || (isObject(v.statusChange) && (v.statusChange.status === "open" || v.statusChange.status === "resolved") && isString(v.statusChange.at) && isAuthor(v.statusChange.by)));
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
-  me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
+  me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes) && v.scopes.every(isString),
   created: (v) => isObject(v) && isString(v.id),
   document: (v) => isObject(v) && isString(v.id) && isString(v.text),
-  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages),
+  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isObject(v.anchorState) && isString(v.anchorState.state) && (v.status === "open" || v.status === "resolved") &&
+    isAuthor(v.statusBy) && isString(v.statusAt) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) && typeof v.skipped === "number",
   threads: (v) => Array.isArray(v) && v.every(SHAPES.thread),
-  message: (v) => isObject(v) && isString(v.id) && isString(v.body) && isObject(v.author),
-  suggestion: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isString(v.status) && isObject(v.author),
+  message: (v) =>
+    isObject(v) && isString(v.id) && isString(v.at) && isString(v.body) && Array.isArray(v.mentions) && v.mentions.every(isString) && isAuthor(v.author) &&
+    (v.editedAt === undefined || isString(v.editedAt)) && (v.editedBy === undefined || isAuthor(v.editedBy)),
+  suggestion: (v) =>
+    isObject(v) && isString(v.id) && isObject(v.anchor) && isObject(v.anchorState) && isString(v.anchorState.state) && (v.status === "pending" || v.status === "accepted" || v.status === "rejected") &&
+    isAuthor(v.author) && isString(v.createdAt) && "change" in v && (v.summary === undefined || isString(v.summary)) && (v.decidedBy === undefined || isAuthor(v.decidedBy)) && (v.decidedAt === undefined || isString(v.decidedAt)),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
+  deletedMessage: (v) => isObject(v) && isString(v.threadId) && isString(v.messageId),
+  deletedThread: (v) => isObject(v) && isString(v.threadId),
+  person: (v) =>
+    isObject(v) && isString(v.person) && isString(v.exportedAt) && Array.isArray(v.threads) && v.threads.every(personThread) &&
+    Array.isArray(v.edits) && v.edits.every((e) => isObject(e) && isString(e.threadId) && isString(e.messageId) && isString(e.at)) && typeof v.unread === "number" &&
+    isObject(v.suggestions) && Array.isArray(v.suggestions.authored) && v.suggestions.authored.every(SHAPES.suggestion) &&
+    Array.isArray(v.suggestions.decided) && v.suggestions.decided.every((d) => isObject(d) && isString(d.id) && (d.status === "accepted" || d.status === "rejected") && isString(d.at)) &&
+    typeof v.suggestions.unread === "number",
+  erased: (v) => isObject(v) && ["messages", "statuses", "edits", "suggestions", "decisions"].every((k) => typeof v[k] === "number"),
 };
 
 export function createClient(options: ClientOptions): CommentsClient {
@@ -204,6 +240,11 @@ export function createClient(options: ClientOptions): CommentsClient {
     resolve: (id, threadId, o) => call("POST", `${thread(id, threadId)}/resolve`, undefined, o, "thread"),
     reopen: (id, threadId, o) => call("POST", `${thread(id, threadId)}/reopen`, undefined, o, "thread"),
     relocate: (id, threadId, o) => call("POST", `${thread(id, threadId)}/relocate`, undefined, o, "thread"),
+    editMessage: (id, threadId, messageId, input, o) => call("PATCH", `${thread(id, threadId)}/messages/${seg(messageId)}`, input, o, "message"),
+    deleteMessage: (id, threadId, messageId, o) => call("DELETE", `${thread(id, threadId)}/messages/${seg(messageId)}`, undefined, o, "deletedMessage"),
+    deleteThread: (id, threadId, o) => call("DELETE", thread(id, threadId), undefined, o, "deletedThread"),
+    exportPerson: (id, person, o) => call("GET", `${doc(id)}/people/${seg(person)}/export`, undefined, o, "person"),
+    erasePerson: (id, person, o) => call("DELETE", `${doc(id)}/people/${seg(person)}`, undefined, o, "erased"),
     listSuggestions: (id, filter, o) => call("GET", `${doc(id)}/suggestions${query(filter)}`, undefined, o, "suggestions"),
     suggest: (id, input, o) => call("POST", `${doc(id)}/suggestions`, input, o, "suggestion"),
     accept: (id, suggestionId, o) => call("POST", `${suggestion(id, suggestionId)}/accept`, undefined, o, "suggestion"),

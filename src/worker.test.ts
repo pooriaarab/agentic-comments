@@ -153,3 +153,71 @@ describe("threads", () => {
     expect((await call(ADA, "GET", "/nothing")).status).toBe(404);
   });
 });
+
+describe("edit, delete, export, and erase", () => {
+  test("the author edits and deletes, others are refused, and the admin scope moderates", async () => {
+    const { call } = await seeded();
+    const made = (await call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: "A1" }, body: "ada here" })).json;
+    const reply = (await call(BOT, "POST", `/docs/d1/threads/${made.id}/replies`, { body: "bot here" })).json;
+    const mine = made.messages[0].id;
+    const path = (m: string) => `/docs/d1/threads/${made.id}/messages/${m}`;
+    expect((await call(BOT, "PATCH", path(mine), { body: "hacked" })).json.error.code).toBe("FORBIDDEN");
+    expect((await call(ADA, "PATCH", path(mine), { body: "ada fixed", author: "x" })).status).toBe(400);
+    expect((await call(BOSS, "PATCH", path(mine), { body: "boss fixed" })).json).toMatchObject({ body: "boss fixed", editedBy: { name: "boss" } });
+    const edited = await call(ADA, "PATCH", path(mine), { body: "ada fixed" });
+    expect([edited.status, edited.json.body, edited.json.editedBy]).toEqual([200, "ada fixed", { kind: "human", name: "ada" }]);
+    expect((await call(SEER, "PATCH", path(mine), { body: "x" })).status).toBe(403);
+    expect((await call(SEER, "DELETE", path(reply.id))).status).toBe(403);
+    expect((await call(SEER, "DELETE", `/docs/d1/threads/${made.id}`)).status).toBe(403);
+    expect((await call(ADA, "DELETE", path(reply.id))).json.error.code).toBe("FORBIDDEN");
+    expect((await call(ADA, "DELETE", path("nope"))).json.error.code).toBe("NO_MESSAGE");
+    expect((await call(BOSS, "DELETE", path(reply.id))).json).toEqual({ threadId: made.id, messageId: reply.id });
+    expect((await call(BOT, "DELETE", `/docs/d1/threads/${made.id}`)).json.error.code).toBe("FORBIDDEN");
+    expect((await call(ADA, "DELETE", `/docs/d1/threads/${made.id}`)).json).toEqual({ threadId: made.id });
+    expect((await call(ADA, "GET", "/docs/d1/threads")).json).toEqual([]);
+  });
+
+  test("export and erase are for yourself, or for an admin", async () => {
+    const { call } = await seeded();
+    const made = (await call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: "A1" }, body: "ada here" })).json;
+    await call(BOT, "POST", `/docs/d1/threads/${made.id}/replies`, { body: "bot here" });
+    expect((await call(BOT, "GET", "/docs/d1/people/ada/export")).json.error.code).toBe("FORBIDDEN");
+    expect((await call(BOT, "DELETE", "/docs/d1/people/ada")).json.error.code).toBe("FORBIDDEN");
+    expect((await call(SEER, "DELETE", "/docs/d1/people/seer")).status).toBe(403);
+    expect((await call(SEER, "GET", "/docs/d1/people/seer/export")).status).toBe(200);
+    const mine = await call(ADA, "GET", "/docs/d1/people/ada/export");
+    expect(mine.json.threads[0].messages.map((m: { body: string }) => m.body)).toEqual(["ada here"]);
+    expect(JSON.stringify(mine.json)).not.toContain("bot here");
+    expect((await call(BOSS, "GET", "/docs/d1/people/ada/export")).status).toBe(200);
+    expect((await call(ADA, "DELETE", "/docs/d1/people/ada")).json).toEqual({ messages: 1, statuses: 1, edits: 0, suggestions: 0, decisions: 0 });
+    const shown = (await call(ADA, "GET", `/docs/d1/threads/${made.id}`)).json;
+    expect(shown.messages.map((m: { body: string }) => m.body)).toEqual(["[erased]", "bot here"]);
+    expect(shown.messages[0].author.name).toBe("erased");
+    expect((await call(BOSS, "DELETE", "/docs/d1/people/scribe")).json).toEqual({ messages: 1, statuses: 0, edits: 0, suggestions: 0, decisions: 0 });
+  });
+});
+
+describe("lifecycle errors and counts", () => {
+  test("a resolved thread refuses an edit, the last message stays, and a tombstone name is refused", async () => {
+    const { call } = await seeded();
+    const made = (await call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: "A1" }, body: "ada here" })).json;
+    const path = `/docs/d1/threads/${made.id}/messages/${made.messages[0].id}`;
+    expect((await call(ADA, "DELETE", path)).json.error.code).toBe("INVALID_INPUT");
+    await call(ADA, "POST", `/docs/d1/threads/${made.id}/resolve`);
+    const late = await call(ADA, "PATCH", path, { body: "x" });
+    expect([late.status, late.json.error.code]).toEqual([409, "THREAD_RESOLVED"]);
+    expect((await call(BOSS, "GET", "/docs/d1/people/erased/export")).status).toBe(400);
+    const odd = await call(BOSS, "GET", "/docs/d1/people/a%2Fb/export");
+    expect([odd.status, odd.json.person, odd.json.threads]).toEqual([200, "a/b", []]);
+  });
+
+  test("erase counts suggestions and decisions, and export shows them", async () => {
+    const { call } = await seeded();
+    const s = (await call(BOT, "POST", "/docs/d1/suggestions", { anchor: { type: "text", quote: "quick" }, change: { replace: "slow" }, summary: "bot idea" })).json;
+    expect((await call(ADA, "POST", `/docs/d1/suggestions/${s.id}/reject`)).status).toBe(200);
+    const out = (await call(ADA, "GET", "/docs/d1/people/ada/export")).json;
+    expect([out.suggestions.decided.length, out.unread, out.suggestions.unread]).toEqual([1, 0, 0]);
+    expect((await call(BOT, "DELETE", "/docs/d1/people/scribe")).json).toMatchObject({ suggestions: 1, decisions: 0 });
+    expect((await call(ADA, "DELETE", "/docs/d1/people/ada")).json).toMatchObject({ suggestions: 0, decisions: 1 });
+  });
+});

@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
 import { ACCEPT_SCOPE } from "./suggestions.js";
 import { stamp, type Actor } from "./principal.js";
+import { MODERATE_SCOPE } from "./threads.js";
 import { CommentsService } from "./service.js";
 import { TEXT_ROOT } from "./local-host.js";
 import { exact, invalid } from "./validate.js";
@@ -28,7 +29,9 @@ export interface WorkerEnv {
  * What a scope lets a principal do. The identity scope grammar has four levels, in this order:
  * `comments:read` reads, `comments:comment` also writes threads, replies, and suggestions,
  * `comments:write` also relocates and accepts or rejects, and `comments:admin` also lets an agent
- * accept or reject (the `comments:accept` right). A person with `comments:write` accepts with no admin scope.
+ * accept or reject (the `comments:accept` right), and edit, delete, export, or erase what another person
+ * wrote (the `comments:moderate` right). A person with `comments:write` accepts with no admin scope.
+ * Anyone with `comments:comment` edits or deletes their own messages and erases their own data.
  */
 const READ: Scope = "comments:read";
 const COMMENT: Scope = "comments:comment";
@@ -112,7 +115,7 @@ export function createTokenAuth(raw: string | undefined): Auth {
 
 /** The actor for a request. Only the host makes it, from the principal the Auth port returned. */
 function actorOf(context: PrincipalContext): Actor {
-  const scopes = hasScope(context.scopes, ADMIN) ? [ACCEPT_SCOPE] : [];
+  const scopes = hasScope(context.scopes, ADMIN) ? [ACCEPT_SCOPE, MODERATE_SCOPE] : [];
   return stamp({ kind: context.kind, name: context.principalId, scopes });
 }
 
@@ -295,6 +298,14 @@ export function createApp(source: DocsSource, options: AppOptions = {}): Hono<Ap
   for (const action of ["resolve", "reopen"] as const) {
     app.post(`${doc}/threads/:id/${action}`, (c) => act(c, COMMENT, true, (s) => s[action](c.req.param("id"))));
   }
+  app.patch(`${doc}/threads/:id/messages/:message`, async (c) => {
+    const input = await body(c);
+    return act(c, COMMENT, true, (s) => s.editMessage(c.req.param("id"), c.req.param("message"), input as never));
+  });
+  app.delete(`${doc}/threads/:id/messages/:message`, (c) => act(c, COMMENT, true, (s) => s.deleteMessage(c.req.param("id"), c.req.param("message"))));
+  app.delete(`${doc}/threads/:id`, (c) => act(c, COMMENT, true, (s) => s.deleteThread(c.req.param("id"))));
+  app.get(`${doc}/people/:name/export`, (c) => act(c, READ, false, (s) => s.exportPerson(c.req.param("name"))));
+  app.delete(`${doc}/people/:name`, (c) => act(c, COMMENT, true, (s) => s.erasePerson(c.req.param("name"))));
   app.post(`${doc}/threads/:id/relocate`, (c) => act(c, WRITE, true, (s) => s.relocate(c.req.param("id"))));
   app.get(`${doc}/suggestions`, (c) => act(c, READ, false, (s) => s.suggestions(c.req.query())));
   app.post(`${doc}/suggestions`, async (c) => {

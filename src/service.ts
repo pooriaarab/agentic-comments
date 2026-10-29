@@ -3,8 +3,8 @@ import { textAnchor, textOf, type Anchor } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { localHost, TEXT_ROOT } from "./local-host.js";
 import type { Actor } from "./principal.js";
-import { Suggestions, type Suggestion } from "./suggestions.js";
-import { Comments, type Message, type Thread } from "./threads.js";
+import { Suggestions, type PersonSuggestions, type Suggestion } from "./suggestions.js";
+import { Comments, type Message, type PersonExport, type Thread } from "./threads.js";
 import { exact, invalid } from "./validate.js";
 
 /** Where a comment or suggestion points, in terms a person or agent can write down. */
@@ -111,6 +111,31 @@ export class CommentsService {
 
   relocate(threadId: string): Thread {
     return this.write(({ comments }) => comments.relocate(threadId, this.actor));
+  }
+
+  editMessage(threadId: string, messageId: string, input: { body: string; mentions?: string[] }): Message {
+    return this.write(({ comments }) => comments.editMessage(threadId, messageId, exact(input, ["body", "mentions"], "an edit") as never, this.actor));
+  }
+
+  deleteMessage(threadId: string, messageId: string): { threadId: string; messageId: string } {
+    return this.write(({ comments }) => comments.deleteMessage(threadId, messageId, this.actor));
+  }
+
+  deleteThread(threadId: string): { threadId: string } {
+    return this.write(({ comments }) => comments.deleteThread(threadId, this.actor));
+  }
+
+  /** Everything the store holds that this person wrote: messages, status changes, and suggestions. */
+  exportPerson(person: string): PersonExport & { suggestions: PersonSuggestions } {
+    return this.read(({ comments, suggestions }) => ({ ...comments.exportPerson(person, this.actor), suggestions: suggestions.exportPerson(person, this.actor) }));
+  }
+
+  /** Tombstone everything this person wrote. Both parts are checked before either is written. */
+  erasePerson(person: string): { messages: number; statuses: number; edits: number; suggestions: number; decisions: number } {
+    return this.write(({ comments, suggestions }) => {
+      comments.checkPerson(person, this.actor);
+      return { ...comments.erasePerson(person, this.actor), ...suggestions.erasePerson(person, this.actor) };
+    });
   }
 
   suggestions(filter: ListFilter = {}): Suggestion[] {

@@ -20,6 +20,7 @@ const FLAGS: Record<string, "value" | "many"> = {
   "--file": "value",
   "--as": "value",
   "--body": "value",
+  "--message": "value",
   "--mention": "many",
   "--text-quote": "value",
   "--occurrence": "value",
@@ -47,15 +48,20 @@ const ALLOWED: Record<string, string[]> = {
   resolve: SHARED,
   reopen: SHARED,
   relocate: SHARED,
+  "edit-message": [...SHARED, "--message", "--body", "--mention"],
+  "delete-message": [...SHARED, "--message"],
+  "delete-thread": SHARED,
+  "export-person": SHARED,
+  "erase-person": SHARED,
   suggestions: [...SHARED, "--status", "--anchor-state"],
   suggest: [...SHARED, ...ANCHOR, "--replace", "--value", "--summary"],
   accept: SHARED,
   reject: SHARED,
   mcp: SHARED,
 };
-const TAKES_ID = ["show", "reply", "resolve", "reopen", "relocate", "accept", "reject"];
+const TAKES_ID = ["show", "reply", "resolve", "reopen", "relocate", "accept", "reject", "edit-message", "delete-message", "delete-thread", "export-person", "erase-person"];
 
-const COMMANDS = ["init", "list", "show", "comment", "reply", "resolve", "reopen", "relocate", "suggestions", "suggest", "accept", "reject", "mcp"];
+const COMMANDS = ["init", "list", "show", "comment", "reply", "resolve", "reopen", "relocate", "edit-message", "delete-message", "delete-thread", "export-person", "erase-person", "suggestions", "suggest", "accept", "reject", "mcp"];
 
 interface Parsed {
   command: string;
@@ -122,6 +128,17 @@ function need(p: Parsed): string {
   return p.id;
 }
 
+function needName(p: Parsed): string {
+  if (p.id === undefined) throw new UsageError(`${p.command} needs the name of a person`);
+  return p.id;
+}
+
+function flag(p: Parsed, name: string): string {
+  const value = p.flags[name];
+  if (value === undefined) throw new UsageError(`${p.command} needs ${name}`);
+  return value;
+}
+
 const HELP = `agentic-comments ${VERSION}
 Comment threads and suggestions anchored to any content, from people and agents.
 
@@ -131,6 +148,7 @@ Setup:
   --file <path>     The store file. Or AGENTIC_COMMENTS_FILE. Default ./comments.ydoc.
   --as <kind:name>  Who acts. Or AGENTIC_COMMENTS_AS. Kinds: human, agent_of_human, agent_of_agent, agent, user_token.
   Scopes come only from AGENTIC_COMMENTS_SCOPES, a comma list such as comments:accept.
+  Another person's message, thread, or data needs comments:moderate.
 
 Commands:
   init [--text <t> | --text-file <p>]         Create the store.
@@ -139,6 +157,11 @@ Commands:
   comment <anchor> --body <t> [--mention h]   Start a thread.
   reply <id> --body <t> [--mention h]         Reply.
   resolve <id> | reopen <id> | relocate <id>
+  edit-message <id> --message <mid> --body <t> [--mention h]   Change a message you wrote.
+  delete-message <id> --message <mid>         Delete a message you wrote.
+  delete-thread <id>                          Delete a thread. Needs every message to be yours.
+  export-person <name>                        Export what a person wrote.
+  erase-person <name>                         Replace what a person wrote with a tombstone.
   suggestions [--status s] [--anchor-state s] List suggestions.
   suggest <anchor> (--replace <t> | --value <json>) [--summary <t>]
   accept <id> | reject <id>
@@ -179,6 +202,11 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       : p.command === "show" ? service.thread(need(p))
       : p.command === "comment" ? service.comment({ anchor: anchorOf(p), body: p.flags["--body"], ...(mentions ? { mentions } : {}) })
       : p.command === "reply" ? service.reply(need(p), { body: p.flags["--body"], ...(mentions ? { mentions } : {}) })
+      : p.command === "edit-message" ? service.editMessage(need(p), flag(p, "--message"), { body: p.flags["--body"], ...(mentions ? { mentions } : {}) })
+      : p.command === "delete-message" ? service.deleteMessage(need(p), flag(p, "--message"))
+      : p.command === "delete-thread" ? service.deleteThread(need(p))
+      : p.command === "export-person" ? service.exportPerson(needName(p))
+      : p.command === "erase-person" ? service.erasePerson(needName(p))
       : p.command === "resolve" ? service.resolve(need(p))
       : p.command === "reopen" ? service.reopen(need(p))
       : p.command === "relocate" ? service.relocate(need(p))

@@ -164,3 +164,57 @@ describe("createClient against the Worker handler", () => {
     expect(await as(ADA).me({ signal: new AbortController().signal })).toMatchObject({ name: "ada" });
   });
 });
+
+describe("lifecycle methods", () => {
+  test("edit, delete, export, and erase go to the right routes and return typed data", async () => {
+    const { as, seen } = setup();
+    const ada = as(ADA);
+    const bot = as(BOT);
+    await ada.createDocument({ id: "d1", text: "abc" });
+    const thread = await ada.addThread("d1", { anchor: { type: "cell", key: "A1" }, body: "ada here" });
+    const reply = await bot.reply("d1", thread.id, { body: "bot here" });
+    const edited = await ada.editMessage("d1", thread.id, thread.messages[0].id, { body: "ada fixed" });
+    expect([edited.body, edited.editedBy?.name]).toEqual(["ada fixed", "ada"]);
+    expect((await refusal(bot.editMessage("d1", thread.id, thread.messages[0].id, { body: "x" }))).code).toBe("FORBIDDEN");
+    const data = await ada.exportPerson("d1", "ada");
+    expect([data.person, data.threads[0].messages[0].body, data.suggestions]).toEqual(["ada", "ada fixed", { authored: [], decided: [], unread: 0 }]);
+    expect(await ada.erasePerson("d1", "ada")).toEqual({ messages: 1, statuses: 1, edits: 0, suggestions: 0, decisions: 0 });
+    expect(await bot.deleteMessage("d1", thread.id, reply.id)).toEqual({ threadId: thread.id, messageId: reply.id });
+    expect(await as(BOSS).deleteThread("d1", thread.id)).toEqual({ threadId: thread.id });
+    expect((await refusal(ada.getThread("d1", thread.id))).code).toBe("NO_THREAD");
+    const methods = seen.map((s) => `${s.init.method} ${new URL(s.url).pathname.replace(thread.id, "T").replace(reply.id, "R").replace(thread.messages[0].id, "M")}`);
+    expect(methods).toContain("PATCH /api/v1/docs/d1/threads/T/messages/M");
+    expect(methods).toContain("DELETE /api/v1/docs/d1/people/ada");
+    expect(methods).toContain("GET /api/v1/docs/d1/people/ada/export");
+  });
+
+  test("a person or message id that would change the route is refused before any request", async () => {
+    const { as, seen } = setup();
+    await expect(as(ADA).exportPerson("d1", "..")).rejects.toThrow(TypeError);
+    await expect(as(ADA).deleteMessage("d1", "t", "")).rejects.toThrow(TypeError);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe("lifecycle reply shapes", () => {
+  test("a 200 reply with a partial shape fails as UNKNOWN", async () => {
+    const reply = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const as = (body: unknown) => createClient({ baseUrl: "https://comments.test", token: ADA, fetch: reply(body) });
+    expect((await refusal(as({ person: "ada", threads: [], suggestions: { authored: [] } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ messages: 1 }).erasePerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ok: true }).deleteThread("d1", "t"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ threadId: "t" }).deleteMessage("d1", "t", "m"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ person: "ada", exportedAt: 1, threads: [], edits: [], unread: 0, suggestions: { authored: [], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    const partial = { person: "ada", exportedAt: "x", threads: [], edits: [], unread: 0, suggestions: { authored: [], decided: [], unread: 0 } };
+    expect((await refusal(as({ ...partial, threads: [{}] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, edits: [null] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    const bare = { id: "m", at: "x", body: "b", mentions: [], author: {} };
+    expect((await refusal(as({ ...partial, threads: [{ threadId: "t", anchor: {}, messages: [bare], statusChange: undefined }] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ id: "m", body: "x", author: { kind: "human", name: "ada" } }).editMessage("d1", "t", "m", { body: "x" }))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ id: "t", anchor: {}, status: "open", messages: [{}] }).getThread("d1", "t"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ id: "t", anchor: {}, anchorState: { state: "attached" }, status: "open", messages: [], skipped: 0 }).getThread("d1", "t"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, threads: [{ threadId: "t", anchor: {}, messages: [], statusChange: {} }] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, suggestions: { authored: [1], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ ...partial, suggestions: { authored: [], decided: [{ id: "s", status: "pending", at: "x" }], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
+  });
+});
