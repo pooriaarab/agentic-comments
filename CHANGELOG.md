@@ -2,6 +2,28 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.5.1
+
+### Changed
+
+- **Breaking:** a token or a principal name that 0.5.0 accepted can now be refused. A token in `AGENTIC_COMMENTS_TOKENS`
+  is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`, so a base64 token with `+` or `/` is refused. A principal name starts with
+  A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters. A name such as `ada@example.com` is refused.
+  One bad token or name refuses the whole token table, and every `/api/v1` request then gets `401`. The CLI and the MCP server
+  refuse a principal name outside this grammar. Check your tokens and names before you upgrade.
+- **Breaking:** the `Authorization` header is checked before your `Auth` runs. A header that is not `Bearer` followed by
+  1 to 512 bytes of A-Z a-z 0-9 `_` `-` gets `401`. This applies to a custom `Auth` too, so a JWT, which contains `.`, is refused.
+- **Breaking:** a write (any method except `GET`, `HEAD`, and `OPTIONS`) that your `Auth` accepts with no `Authorization`
+  header gets `403`, unless its `Origin` is listed in the new `origins` option of `createApp`. The default lists no origins.
+  A host that signs writes with a session cookie must pass `origins`. Before, the Worker did not check the origin.
+- **Breaking:** a custom `Auth` that throws now returns `503`, not `500`, with the code `INTERNAL`. Alerts keyed on `500` must change.
+- The auth and principal code now uses `agentic-identity` 0.6. The Worker resolves the caller with `requirePrincipal` from
+  `agentic-identity/http`. The token table and the operator principal both go through `parsePrincipal`.
+
+### Removed
+
+- The Worker's own kind check. The Worker and the operator code now parse `kind:name` with `parsePrincipal` from `agentic-identity`.
+
 ## 0.5.0
 
 ### Added
