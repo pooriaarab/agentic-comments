@@ -584,7 +584,7 @@ describe("peer records, outer transactions, and contexts", () => {
     const target = new Y.Doc();
     const comments = new Comments(target, { now: clock });
     const suggestions = new Suggestions(comments, host);
-    const record = { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: null };
+    const record = { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: { n: 1 } };
     target.getMap("comments.suggestion-applied").set(`${s.id}:1`, record);
     target.getMap("comments.suggestion-applied").set(`${s.id}:2`, record);
     expect(reverted).toEqual([]);
@@ -593,3 +593,41 @@ describe("peer records, outer transactions, and contexts", () => {
     expect(suggestions.get(s.id).status).toBe("accepted");
   });
 });
+
+describe("settle limits and the Yjs guard", () => {
+  const cellAnchor = { type: "cell", key: "A1" } as const;
+
+  test("Yjs still keeps its open transaction in _transaction", () => {
+    expect((new Y.Doc() as unknown as { _transaction: unknown })._transaction).toBeNull();
+  });
+
+  test("a second record with no receipt is dropped and reported, and revert never gets null", () => {
+    const reverted: unknown[] = [];
+    const r = replica({ apply: () => null, revert: (receipt) => void reverted.push(receipt) });
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    const applied = r.ydoc.getMap("comments.suggestion-applied");
+    for (const client of [1, 2]) applied.set(`${s.id}:${client}`, { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: null });
+    r.suggestions.settle();
+    expect(reverted).toEqual([]);
+    expect(applied.size).toBe(1);
+    expect(r.suggestions.problems().some((p) => p.reason.includes("has no receipt"))).toBe(true);
+  });
+
+  test("an idempotent host never gets a revert call", () => {
+    const reverted: unknown[] = [];
+    const a = replica({ idempotent: true, apply: () => ({ r: 1 }), revert: (receipt) => void reverted.push(receipt) });
+    const s = a.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    const b = replica({ idempotent: true, apply: () => ({ r: 1 }) }, a.ydoc);
+    a.suggestions.accept(s.id, ada);
+    b.suggestions.accept(s.id, grace);
+    sync(a.ydoc, b.ydoc);
+    expect(reverted).toEqual([]);
+    expect(a.ydoc.getMap("comments.suggestion-applied").size).toBe(1);
+  });
+
+  test("a name in a non-NFC form is refused", () => {
+    expect(code(() => stamp({ kind: "human", name: "cafe\u0301" }))).toBe("INVALID_AUTHOR");
+    expect(stamp({ kind: "human", name: "caf\u00e9" }).name).toBe("caf\u00e9");
+  });
+});
+

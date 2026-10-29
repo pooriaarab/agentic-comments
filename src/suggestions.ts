@@ -68,10 +68,11 @@ export interface SuggestionHost {
    * application stays and `revert` undoes each other. Every replica runs it at the same time, and the
    * results must merge to one outcome, as a Yjs delete of the same range does. Throw before you change
    * anything. A receipt comes from stored data. A peer that can write comment data can choose it, so
-   * check it against `context.anchor` before you use it.
+   * check it before you use it. The anchor and the author are stored data too, so a check against them
+   * helps against a mistake and not against a peer that can write comment data.
    */
   revert?(receipt: unknown, context: RevertContext): void;
-  /** Say that applying the same change twice is harmless. Then no `revert` is needed. */
+  /** Say that applying the same change twice is harmless. Then `revert` is not needed, and a duplicate is not undone. */
   idempotent?: boolean;
 }
 
@@ -162,10 +163,9 @@ export class Suggestions {
    * Records of one kind for one suggestion, in client order. A record that is not valid is not counted:
    * one with no author or time, a receipt that is not small JSON, or a decider who decided their own work.
    */
-  private records(map: Y.Map<unknown>, id: string, author: Author | undefined): Decision[] {
+  private records(entries: [string, unknown][], id: string, author: Author | undefined): Decision[] {
     const out: Decision[] = [];
-    for (const [key, raw] of map.entries()) {
-      if (!key.startsWith(`${id}:`)) continue;
+    for (const [key, raw] of entries) {
       const client = clientOf(key.slice(id.length + 1));
       const r = (raw ?? {}) as Record<string, unknown>;
       const by = readAuthor(r.by);
@@ -182,7 +182,19 @@ export class Suggestions {
     return out.sort((a, b) => Number(a.receipt !== null) - Number(b.receipt !== null) || a.client - b.client);
   }
 
-  private read(id: string, fields: unknown): Suggestion {
+  /** Group the entries of a decision map by suggestion id in one pass, so a read does not scan the map per suggestion. */
+  private index(map: Y.Map<unknown>): Map<string, [string, unknown][]> {
+    const groups = new Map<string, [string, unknown][]>();
+    for (const entry of map.entries()) {
+      const id = entry[0].slice(0, entry[0].lastIndexOf(":"));
+      const group = groups.get(id);
+      if (group) group.push(entry);
+      else groups.set(id, [entry]);
+    }
+    return groups;
+  }
+
+  private read(id: string, fields: unknown, indexes = { applied: this.index(this.applied), rejected: this.index(this.rejected) }): Suggestion {
     try {
       if (!ID.test(id)) throw new Error("the suggestion id is not short and plain");
       if (!(fields instanceof Y.Map)) throw new Error("the suggestion is not a map");
@@ -195,8 +207,8 @@ export class Suggestions {
         throw new Error("the summary is not valid");
       }
       if (change === undefined || JSON.stringify(strictCopy(change)).length > MAX_CHANGE) throw new Error("the change is missing or too large");
-      const won = this.records(this.applied, id, author)[0];
-      const refused = this.records(this.rejected, id, author)[0];
+      const won = this.records(indexes.applied.get(id) ?? [], id, author)[0];
+      const refused = this.records(indexes.rejected.get(id) ?? [], id, author)[0];
       const decision = won ? { status: "accepted" as const, ...won } : refused ? { status: "rejected" as const, ...refused } : undefined;
       return {
         id,
@@ -323,9 +335,10 @@ export class Suggestions {
   private readAll(): { suggestions: Suggestion[]; problems: { id: string; reason: string }[] } {
     const suggestions: Suggestion[] = [];
     const problems: { id: string; reason: string }[] = [];
+    const indexes = { applied: this.index(this.applied), rejected: this.index(this.rejected) };
     for (const [id, fields] of this.map.entries()) {
       try {
-        suggestions.push(this.read(id, fields));
+        suggestions.push(this.read(id, fields, indexes));
       } catch (error) {
         problems.push({ id: safeId(id), reason: (error as Error).message });
       }
@@ -339,24 +352,31 @@ export class Suggestions {
    * A revert that throws leaves its record, so the next merge tries again.
    */
   settle(): void {
-    const ids = new Set<string>();
-    for (const key of this.applied.keys()) {
-      const id = key.slice(0, key.lastIndexOf(":"));
-      if (ID.test(id) && this.map.has(id)) ids.add(id);
-    }
-    this.failures = this.failures.filter((f) => f.reason.startsWith("apply failed"));
+    const groups = this.index(this.applied);
+    this.failures = this.failures.filter((f) => f.reason.startsWith("apply failed") || f.reason.startsWith("a duplicate application has no receipt"));
     this.ydoc.transact(() => {
-      for (const id of ids) {
+      for (const [id, entries] of groups) {
+        if (!ID.test(id) || !this.map.has(id)) continue;
         let s: Suggestion;
         try {
           s = this.read(id, this.map.get(id));
         } catch {
           continue;
         }
-        for (const loser of this.records(this.applied, id, s.author).slice(1)) {
+        for (const loser of this.records(entries, id, s.author).slice(1)) {
+          const key = `${id}:${loser.client}`;
+          if (this.host.idempotent) {
+            this.applied.delete(key);
+            continue;
+          }
+          if (loser.receipt === null) {
+            this.failures.push({ id: safeId(id), reason: "a duplicate application has no receipt, so its edit cannot be undone and stays in the document" });
+            this.applied.delete(key);
+            continue;
+          }
           try {
             this.host.revert?.(loser.receipt, { suggestionId: id, anchor: copy(s.anchor), author: Object.freeze({ ...s.author }), by: Object.freeze({ ...loser.by }), ydoc: this.ydoc });
-            this.applied.delete(`${id}:${loser.client}`);
+            this.applied.delete(key);
           } catch (error) {
             this.failures.push({ id: safeId(id), reason: `a duplicate application could not be reverted: ${safeText(error instanceof Error ? error.message : error)}` });
           }

@@ -68,7 +68,7 @@ export function readAuthor(value: unknown): Author | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { kind, name } = value as { kind?: unknown; name?: unknown };
   if (!PRINCIPAL_KINDS.includes(kind as PrincipalKind)) return undefined;
-  if (typeof name !== "string" || name === "" || name !== name.trim() || name.length > MAX_NAME || HIDDEN.test(name) || VARIATION.test(name)) return undefined;
+  if (typeof name !== "string" || name === "" || name !== name.trim() || name.length > MAX_NAME || HIDDEN.test(name) || VARIATION.test(name) || name !== name.normalize("NFC")) return undefined;
   return { kind: kind as PrincipalKind, name };
 }
 

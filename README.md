@@ -76,22 +76,27 @@ suggestions.accept(s.id, ada);
 ```
 
 - A signed-in person (`human`) accepts or rejects. Every other kind, including `user_token`, needs the
-  `comments:accept` scope, and never decides a suggestion it wrote. Names match exactly, and two
+  `comments:accept` scope, and never decides a suggestion it wrote. Names match exactly, in Unicode NFC form (a name in another form is refused), and two
   principals that are not signed-in people with the same name count as one, whatever their kinds.
 - Accept checks that a text anchor still matches the document, then runs the edit and writes the
   record in one step. If `apply` throws before it edits, the suggestion stays pending. If it edits and
   then fails, the decision is recorded without a receipt, and `problems()` reports it. A host that cannot undo a double apply must say `idempotent: true`.
+- An accept on a replica that has not yet seen a reject wins, even when a person made the reject long before.
+  The window is any time the replicas were apart. An agent with the scope can override a person this way.
+  A host that wants the person to win can accept only while its replica is in sync.
 - Two replicas that accept before they meet each apply the edit. After the merge, the application of
   the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
   accepted.
 - A receipt is stored data. A peer that can write comment data can choose one. Check it in `revert`
   against the `anchor` it gets before you use it. A record with no receipt (an `apply` that edited and
-  then failed) always stays, and the other application is undone.
+  then failed) always stays, and the other application is undone. If two records have none, the extra
+  edit cannot be undone. `problems()` reports it. With `idempotent: true`, a duplicate is never undone.
 - `apply` and `revert` must be synchronous, and must edit only the Yjs document. `accept` cannot run
   inside another Yjs transaction, so not inside an observer or an `apply`.
 - A peer that can write the document can write a decision record. Records with a bad author, time, or
   receipt, or from a decider who wrote the suggestion as an agent, are not counted. A well-formed forged
-  record is. The sync layer must decide who may write.
+  record is, and it can win settle, so every replica undoes the real edit. The sync layer must decide who
+  may write.
 
 ## Author kinds
 
