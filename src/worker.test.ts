@@ -163,6 +163,7 @@ describe("edit, delete, export, and erase", () => {
     const path = (m: string) => `/docs/d1/threads/${made.id}/messages/${m}`;
     expect((await call(BOT, "PATCH", path(mine), { body: "hacked" })).json.error.code).toBe("FORBIDDEN");
     expect((await call(ADA, "PATCH", path(mine), { body: "ada fixed", author: "x" })).status).toBe(400);
+    expect((await call(BOSS, "PATCH", path(mine), { body: "boss fixed" })).json).toMatchObject({ body: "boss fixed", editedBy: { name: "boss" } });
     const edited = await call(ADA, "PATCH", path(mine), { body: "ada fixed" });
     expect([edited.status, edited.json.body, edited.json.editedBy]).toEqual([200, "ada fixed", { kind: "human", name: "ada" }]);
     expect((await call(SEER, "PATCH", path(mine), { body: "x" })).status).toBe(403);
@@ -201,7 +202,7 @@ describe("lifecycle errors and counts", () => {
     const { call } = await seeded();
     const made = (await call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: "A1" }, body: "ada here" })).json;
     const path = `/docs/d1/threads/${made.id}/messages/${made.messages[0].id}`;
-    expect((await call(ADA, "DELETE", path)).status).toBe(400);
+    expect((await call(ADA, "DELETE", path)).json.error.code).toBe("INVALID_INPUT");
     await call(ADA, "POST", `/docs/d1/threads/${made.id}/resolve`);
     const late = await call(ADA, "PATCH", path, { body: "x" });
     expect([late.status, late.json.error.code]).toEqual([409, "THREAD_RESOLVED"]);

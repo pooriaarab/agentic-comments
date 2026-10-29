@@ -134,18 +134,23 @@ type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | 
 const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isString = (v: unknown) => typeof v === "string";
+const isAuthor = (v: unknown) => isObject(v) && typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind) && isString(v.name);
 // One thread in an export. It reads SHAPES.message at call time, so it can sit above SHAPES.
 const personThread = (v: unknown) =>
   isObject(v) && isString(v.threadId) && isObject(v.anchor) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) &&
-  (v.statusChange === undefined || (isObject(v.statusChange) && (v.statusChange.status === "open" || v.statusChange.status === "resolved") && isString(v.statusChange.at) && isObject(v.statusChange.by)));
+  (v.statusChange === undefined || (isObject(v.statusChange) && (v.statusChange.status === "open" || v.statusChange.status === "resolved") && isString(v.statusChange.at) && isAuthor(v.statusChange.by)));
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
   created: (v) => isObject(v) && isString(v.id),
   document: (v) => isObject(v) && isString(v.id) && isString(v.text),
   thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages),
   threads: (v) => Array.isArray(v) && v.every(SHAPES.thread),
-  message: (v) => isObject(v) && isString(v.id) && isString(v.body) && isObject(v.author),
-  suggestion: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isString(v.status) && isObject(v.author),
+  message: (v) =>
+    isObject(v) && isString(v.id) && isString(v.at) && isString(v.body) && Array.isArray(v.mentions) && v.mentions.every(isString) && isAuthor(v.author) &&
+    (v.editedAt === undefined || isString(v.editedAt)) && (v.editedBy === undefined || isAuthor(v.editedBy)),
+  suggestion: (v) =>
+    isObject(v) && isString(v.id) && isObject(v.anchor) && isObject(v.anchorState) && isString(v.anchorState.state) && (v.status === "pending" || v.status === "accepted" || v.status === "rejected") &&
+    isAuthor(v.author) && isString(v.createdAt) && (v.decidedBy === undefined || isAuthor(v.decidedBy)) && (v.decidedAt === undefined || isString(v.decidedAt)),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
   deletedMessage: (v) => isObject(v) && isString(v.threadId) && isString(v.messageId),
   deletedThread: (v) => isObject(v) && isString(v.threadId),
