@@ -61,12 +61,12 @@ describe("commentsAccount", () => {
   test("erases, counts, and a second erase counts 0", async () => {
     const { d, t } = seed();
     const first = await commentsAccount.eraseAccount(ada, { documents: [d], actor: ada });
-    expect(first).toEqual({ messages: 1, statuses: 1, edits: 1, suggestions: 1, decisions: 1, documents: 0 });
+    expect(first).toEqual({ messages: 1, statuses: 1, edits: 1, suggestions: 1, decisions: 1, documents: 0, unread: 0 });
     const thread = d.comments.get(t.id);
     expect(thread.messages.map((m) => m.author.name)).toEqual([ERASED_NAME, "bob"]);
     expect(thread.messages[1].body).toBe("bob says");
     const second = await commentsAccount.eraseAccount(ada, { documents: [d], actor: ada });
-    expect(second).toEqual({ messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 });
+    expect(second).toEqual({ messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0, unread: 0 });
     const out = await commentsAccount.exportAccount(ada, { documents: [d], actor: ada });
     expect(Object.values(out).every((v) => v.length === 0)).toBe(true);
   });
@@ -135,7 +135,7 @@ describe("commentsAccount", () => {
     expect((await store.get("comments_docs", "theirs"))?.createdBy).toEqual({ kind: "human", name: "bob" });
     const after = await commentsAccount.exportAccount(ada, deps);
     expect([after.messages, after.documents]).toEqual([[], []]);
-    expect(await commentsAccount.eraseAccount(ada, deps)).toEqual({ messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 });
+    expect(await commentsAccount.eraseAccount(ada, deps)).toEqual({ messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0, unread: 0 });
     const left = await docs.read("theirs", bob, (service) => service.threads().flatMap((t) => t.messages.map((m) => m.body)));
     expect(left).toEqual([ERASED_BODY, "bob own"]);
     await docs.write("mine", ada, (service) => service.threads());
@@ -163,5 +163,10 @@ describe("commentsAccount", () => {
     let twice: CommentsAccountDocument | undefined;
     await docs.eachAccountDocument((d) => void (d.id === "ok" && (twice = d)), false);
     expect(await code(() => commentsAccount.exportAccount(ada, { documents: [twice!], actor: ada, worker: docs }))).toBe("INVALID_INPUT");
+    // A refused erase changes nothing: the listed copy still holds the message.
+    twice!.comments.add({ anchor: cell, body: "ada listed" }, ada);
+    expect(await code(() => commentsAccount.eraseAccount(ada, { documents: [twice!], actor: ada, worker: docs }))).toBe("INVALID_INPUT");
+    expect(twice!.comments.list().map((t) => t.messages[0].author.name)).toEqual(["ada"]);
+    expect(await commentsAccount.eraseAccount(ada, { documents: [], actor: ada, worker: docs })).toMatchObject({ documents: 1, unread: 1 });
   });
 });

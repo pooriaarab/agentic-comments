@@ -17,11 +17,14 @@ export interface CommentsAccountDocument {
 
 /** What `CommentsDocs` offers the plug-in. */
 export interface AccountWorker {
-  /** Runs `fn` on each stored document. With `save`, the state is written back in the same transaction, unless `fn` returns `false`. */
-  eachAccountDocument(fn: (doc: CommentsAccountDocument) => boolean | void, save: boolean): Promise<void>;
+  /** The id of each stored document. */
+  accountDocumentIds(): Promise<string[]>;
+  /** Runs `fn` on each stored document. With `save`, the state is written back in the same transaction. A document deleted meanwhile is skipped. */
+  eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void>;
   /** The documents the subject created. `unread` names the rows whose creator cannot be read, so the export is not complete for them. */
   exportCreated(author: Author): Promise<{ documents: { documentId: string; createdAt: unknown }[]; unread: string[] }>;
-  eraseCreated(author: Author): Promise<number>;
+  /** `count` is the creators it tombstoned. `unread` names the rows whose creator cannot be read, which it leaves in place. */
+  eraseCreated(author: Author): Promise<{ count: number; unread: string[] }>;
 }
 
 export interface CommentsAccountDeps {
@@ -52,7 +55,7 @@ export interface CommentsAccount {
    */
   exportAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statusChanges" | "edits" | "suggestions" | "decisions" | "documents" | "unread", JsonRecord[]>>;
   /** Replaces what the subject wrote with a tombstone (see `Comments.erasePerson`). Counts by kind, summed over documents. The thread shape stays. A repeat finds nothing and counts 0. A decision that the subject made on their own suggestion is deleted and not counted, while `unread` in the export counts it. */
-  eraseAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions" | "documents", number>>;
+  eraseAccount(subject: Author, deps: CommentsAccountDeps): Promise<Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions" | "documents" | "unread", number>>;
 }
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -70,7 +73,7 @@ function check(subject: Author, deps: CommentsAccountDeps): { documents: Comment
   const bad = (why: string): never => {
     throw new CommentsError("INVALID_INPUT", `deps: ${why}`);
   };
-  if (deps.worker !== undefined && (["eachAccountDocument", "exportCreated", "eraseCreated"] as const).some((m) => typeof deps.worker?.[m] !== "function")) bad("worker needs eachAccountDocument, exportCreated, and eraseCreated");
+  if (deps.worker !== undefined && (["accountDocumentIds", "eachAccountDocument", "exportCreated", "eraseCreated"] as const).some((m) => typeof deps.worker?.[m] !== "function")) bad("worker needs accountDocumentIds, eachAccountDocument, exportCreated, and eraseCreated");
   for (const d of documents) {
     if (typeof d?.id !== "string" || d.id === "" || ids.has(d.id)) bad("each document needs a unique id");
     if (!(d.comments instanceof Comments) || !(d.suggestions instanceof Suggestions)) bad("each document needs Comments and Suggestions made by this package");
@@ -99,7 +102,7 @@ function collect({ id: documentId, comments, suggestions }: CommentsAccountDocum
   if (unread > 0) out.unread.push({ documentId, count: unread });
 }
 
-type Counts = Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions" | "documents", number>;
+type Counts = Record<"messages" | "statuses" | "edits" | "suggestions" | "decisions" | "documents" | "unread", number>;
 
 // The document id is not personal data. A repeat finds the documents again and counts only what is left.
 async function stopAt<T>(where: string, run: () => Promise<T> | T): Promise<T> {
@@ -111,6 +114,12 @@ async function stopAt<T>(where: string, run: () => Promise<T> | T): Promise<T> {
     // A store that lost a race is not damaged data: the caller runs the erase again.
     throw new CommentsError(known ? cause.code : cause instanceof StoreConflictError ? "CONFLICT" : "CORRUPT", `erase stopped at ${where}: ${reason}`, { cause });
   }
+}
+
+// Before any write: a stored document that a host also lists would be read twice, and a refused run must change nothing.
+async function refuseOverlap(documents: CommentsAccountDocument[], worker: AccountWorker): Promise<void> {
+  const listed = new Set(documents.map((d) => d.id));
+  if ((await worker.accountDocumentIds()).some((id) => listed.has(id))) throw new CommentsError("INVALID_INPUT", "deps.worker holds a document that deps.documents also lists");
 }
 
 function wipe({ comments, suggestions }: CommentsAccountDocument, own: Actor, counts: Counts): void {
@@ -128,13 +137,10 @@ export const commentsAccount: CommentsAccount = {
   async exportAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
     const out: Collected = { messages: [], statusChanges: [], edits: [], suggestions: [], decisions: [], documents: [], unread: [] };
-    const taken = new Set(documents.map((d) => d.id));
+    if (deps.worker) await refuseOverlap(documents, deps.worker);
     for (const doc of documents) collect(doc, own, out);
     if (deps.worker) {
-      await deps.worker.eachAccountDocument((doc) => {
-        if (taken.has(doc.id)) throw new CommentsError("INVALID_INPUT", "deps.worker holds a document that deps.documents also lists");
-        collect(doc, own, out);
-      }, false);
+      await deps.worker.eachAccountDocument((doc) => collect(doc, own, out), false);
       const created = await deps.worker.exportCreated(own);
       out.documents.push(...created.documents);
       for (const documentId of created.unread) out.unread.push({ documentId, count: 1 });
@@ -143,8 +149,8 @@ export const commentsAccount: CommentsAccount = {
   },
   async eraseAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
-    const taken = new Set(documents.map((d) => d.id));
-    const counts: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 };
+    if (deps.worker) await refuseOverlap(documents, deps.worker);
+    const counts: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0, unread: 0 };
     for (const doc of documents) await stopAt(`document ${shown(doc.id)}`, () => wipe(doc, own, counts));
     if (deps.worker) {
       // A stop inside one stored document rolls that document back, so it is never half erased.
@@ -152,16 +158,15 @@ export const commentsAccount: CommentsAccount = {
       const each = new Map<string, Counts>();
       await stopAt("a worker document", () =>
         deps.worker!.eachAccountDocument((doc) => {
-          if (taken.has(doc.id)) throw new CommentsError("INVALID_INPUT", "deps.worker holds a document that deps.documents also lists");
-          const one: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 };
+          const one: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0, unread: 0 };
           wipe(doc, own, one);
           each.set(doc.id, one);
-          // A document with nothing of the subject is not written back.
-          return Object.values(one).some((n) => n > 0);
         }, true),
       );
       for (const c of each.values()) for (const k of Object.keys(counts) as (keyof Counts)[]) counts[k] += c[k];
-      counts.documents = await stopAt("the worker creators", () => deps.worker!.eraseCreated(own));
+      const creators = await stopAt("the worker creators", () => deps.worker!.eraseCreated(own));
+      counts.documents = creators.count;
+      counts.unread = creators.unread.length;
     }
     return counts;
   },

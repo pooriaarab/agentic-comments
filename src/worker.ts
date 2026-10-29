@@ -190,6 +190,11 @@ export class CommentsDocs {
     });
   }
 
+  /** For the account plug-in: the id of each stored document. */
+  async accountDocumentIds(): Promise<string[]> {
+    return this.ids();
+  }
+
   private async ids(): Promise<string[]> {
     const ids: string[] = [];
     let cursor: string | undefined;
@@ -203,10 +208,10 @@ export class CommentsDocs {
 
   /**
    * For the account plug-in: runs `fn` on each stored document, with its `Comments` and `Suggestions`. With `save`,
-   * each document runs in one transaction and the state is written back there, unless `fn` returns `false`. A throw leaves it as it was.
+   * each document runs in one transaction and the state is written back there, A throw leaves it as it was. A document deleted since the list was read is skipped.
    * A damaged document stops the run with CORRUPT.
    */
-  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => boolean | void, save: boolean): Promise<void> {
+  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void> {
     const open = (id: string, row: { state?: unknown } | null) => {
       const ydoc = this.load(row, id);
       ydoc.getText(TEXT_ROOT);
@@ -215,14 +220,15 @@ export class CommentsDocs {
     };
     for (const id of await this.ids()) {
       if (!save) {
-        const { doc } = open(id, await this.store.get(DOCS, id));
-        fn(doc);
+        const row = await this.store.get(DOCS, id);
+        if (row !== null) fn(open(id, row).doc);
         continue;
       }
       await this.store.transaction(async (tx) => {
         const row = (await tx.get(DOCS, id)) as { state?: unknown; createdBy?: unknown; createdAt?: unknown } | null;
+        if (row === null) return;
         const { ydoc, doc } = open(id, row);
-        if (fn(doc) === false) return;
+        fn(doc);
         const state = Y.encodeStateAsUpdate(ydoc);
         if (state.length > MAX_STATE) throw new CommentsError("STORE_FULL", `document "${id}" would pass ${MAX_STATE} bytes of state`);
         await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
@@ -252,10 +258,11 @@ export class CommentsDocs {
     return { documents, unread };
   }
 
-  /** Give the creator of each document this subject made the tombstone name. Returns how many. A repeat finds none. */
-  async eraseCreated(author: Author): Promise<number> {
+  /** Give the creator of each document this subject made the tombstone name. Returns how many, and the rows it could not read. A repeat finds none. */
+  async eraseCreated(author: Author): Promise<{ count: number; unread: string[] }> {
     const ids: string[] = [];
-    await this.scan(author, async (id) => void ids.push(id));
+    const unread: string[] = [];
+    await this.scan(author, async (id) => void ids.push(id), unread);
     let count = 0;
     for (const id of ids) {
       await this.store.transaction(async (tx) => {
@@ -266,7 +273,7 @@ export class CommentsDocs {
         count++;
       });
     }
-    return count;
+    return { count, unread };
   }
 }
 
