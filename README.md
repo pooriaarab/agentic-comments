@@ -7,8 +7,8 @@
 Comment threads and suggestions anchored to any content, from people and agents.
 
 > Status: see [npm](https://www.npmjs.com/package/agentic-comments) for the latest version. Threads,
-> suggestions, anchor survival, a CLI, and an MCP server work in the source. Version 0.1.0 has the library
-> only. The CLI and the MCP server arrive in the next release. Notifications come after that.
+> suggestions, anchor survival, a CLI, an MCP server, and a notification stream work in the source. Version
+> 0.1.0 has the library only. The rest arrives in the next release.
 
 ## Install
 
@@ -170,6 +170,33 @@ npx agentic-comments accept <id>
   `{"value": <JSON>}`.
 - From code: `import { FileStore, CommentsService, operatorActor } from "agentic-comments/local"`.
 
+## Notifications
+
+`Notifications` turns changes into events that your app can send to a notifier. It watches the data, so it
+sees changes from other replicas too. It starts when you create it and replays no history.
+
+```ts
+import { Notifications } from "agentic-comments";
+
+const notifications = new Notifications(comments, suggestions, { onError: (error) => report(error) });
+const stop = notifications.subscribe(async (event) => {
+  if (event.type === "mention") await notify(event.mention, event.threadId); // fetch the text with the ids
+});
+```
+
+- Events: `thread.created`, `message.added`, `mention` (one per handle), `thread.resolved`,
+  `thread.reopened`, `suggestion.created`, `suggestion.accepted`, `suggestion.rejected`.
+- An event holds ids, the actor, `machineMade`, the anchor type, `source` (`local` or `remote`), and a time.
+  It never holds the text of a comment, a suggestion, or a change. Fetch that with the ids.
+- The same change has the same `id` on every replica. Delivery is at least once, so a notifier that must
+  send once keeps the ids it has sent. One replica never emits the same id twice.
+- Use `source` to decide where to send. If every replica runs a notifier, filter on `local`, or each
+  replica sends its own copy of every remote change.
+- A listener that throws, or returns a rejected promise, cannot break a write or another listener. The
+  error goes to `onError`, or to `errors()`.
+- A change that arrives as a whole thread, with its replies and status inside, makes an event for each
+  message and for a resolved status. A reopen inside such a thread makes none.
+
 ## Author kinds
 
 | Kind | Meaning | Label |
@@ -199,6 +226,8 @@ npx agentic-comments accept <id>
 - The CLI trusts its caller: a process that can set `AGENTIC_COMMENTS_AS` and `AGENTIC_COMMENTS_SCOPES` can
   act as anyone. Give an agent the MCP server, where the operator fixes both. Do not give it a shell with
   the store file and the CLI.
+- Events come from the data and not from the calls, so a status change that two replicas make at once gives
+  each replica its own event, and a thread that arrives whole gives events for its current state only.
 - Every replica of a document must register the same custom anchor kinds.
 - A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
   the thread unreadable.

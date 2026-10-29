@@ -9,3 +9,4 @@ comments.ydoc*
 *.ydoc.lock
 *.ydoc.tmp-*
 *.ydoc.lock.stale-*
+.crabbox/

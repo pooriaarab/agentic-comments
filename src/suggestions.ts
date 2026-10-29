@@ -143,6 +143,11 @@ export class Suggestions {
   private get map(): Y.Map<Fields> {
     return this.ydoc.getMap<Fields>(SUGGESTIONS);
   }
+  /** The three Yjs maps that hold suggestions and their decisions. `Notifications` watches them. */
+  get maps(): { suggestions: Y.Map<Y.Map<unknown>>; applied: Y.Map<unknown>; rejected: Y.Map<unknown> } {
+    return { suggestions: this.map, applied: this.applied, rejected: this.rejected };
+  }
+
   private get applied(): Y.Map<unknown> {
     return this.ydoc.getMap<unknown>(APPLIED);
   }

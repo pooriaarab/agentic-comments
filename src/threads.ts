@@ -138,6 +138,11 @@ export class Comments {
     return this.ydoc.getMap<Fields>(THREADS);
   }
 
+  /** The Yjs map that holds the threads. `Notifications` watches it. */
+  get threadsMap(): Y.Map<Y.Map<unknown>> {
+    return this.map;
+  }
+
   /** The clock, as an ISO time. Used by `Suggestions`. */
   time(): string {
     const at = this.now();

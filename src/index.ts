@@ -13,3 +13,4 @@ export {
   type SuggestionFilter,
   type SuggestionHost,
 } from "./suggestions.js";
+export { Notifications, type CommentEvent, type CommentEventType, type CommentListener, type NotificationsOptions } from "./notifications.js";
