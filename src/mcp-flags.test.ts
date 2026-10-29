@@ -30,6 +30,8 @@ describe("help and version never start the server", () => {
     ["cli.js", ["mcp", "--help"], "help"],
     ["cli.js", ["mcp", "-h"], "help"],
     ["cli.js", ["mcp", "--version"], "version"],
+    ["cli.js", ["mcp", "-V"], "version"],
+    ["cli.js", ["mcp", "-v"], "version"],
     ["mcp-bin.js", ["--help"], "help"],
     ["mcp-bin.js", ["--version"], "version"],
   ];
