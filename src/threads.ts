@@ -1,7 +1,8 @@
 import * as Y from "yjs";
-import { BUILT_IN_KINDS, type Anchor, type AnchorKind } from "./anchor.js";
+import { BUILT_IN_KINDS, textOf, type Anchor, type AnchorKind } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
+import { ID, shown } from "./text.js";
 
 export interface Message {
   id: string;
@@ -52,9 +53,11 @@ export interface ThreadFilter {
 const THREADS = "comments.threads";
 const MAX_BODY = 10_000;
 const MAX_MENTIONS = 50;
+/** A local reply stops here. Replicas that reply at once can go past it, so a read shows up to twice as many. */
 const MAX_MESSAGES = 1_000;
-const MAX_HANDLE = 128;
+const READ_LIMIT = 2 * MAX_MESSAGES;
 const STATUSES = ["open", "resolved"];
+const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}_.-]{0,62}[\p{L}\p{N}])?$/u;
 const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}_.-]{0,63})/gu;
 
 type Fields = Y.Map<unknown>;
@@ -78,13 +81,13 @@ function body(value: unknown): string {
 /** Handles match without case and without leading `@`. They are stored in this form. */
 const handle = (value: string): string => value.replace(/^@+/, "").toLowerCase();
 
-const validHandle = (value: unknown): value is string => typeof value === "string" && value !== "" && value.length <= MAX_HANDLE && /^\S+$/.test(value) && handle(value) === value;
+const validHandle = (value: unknown): value is string => typeof value === "string" && HANDLE.test(value) && handle(value) === value;
 
 function mentionsOf(text: string, explicit: unknown): string[] {
   const found = [...text.matchAll(MENTION)].map((m) => handle(m[1].replace(/[._-]+$/, "")));
   let listed: string[] = [];
   if (explicit !== undefined) {
-    const ok = Array.isArray(explicit) && explicit.length <= MAX_MENTIONS && explicit.every((m) => typeof m === "string" && handle(m) !== "" && handle(m).length <= MAX_HANDLE && /^\S+$/.test(handle(m)));
+    const ok = Array.isArray(explicit) && explicit.length <= MAX_MENTIONS && explicit.every((m) => typeof m === "string" && HANDLE.test(handle(m)));
     if (!ok) invalid(`mentions must be a list of up to ${MAX_MENTIONS} handles with no spaces`);
     listed = (explicit as string[]).map(handle);
   }
@@ -93,8 +96,8 @@ function mentionsOf(text: string, explicit: unknown): string[] {
   return all;
 }
 
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
-const validDate = (value: unknown): value is string => typeof value === "string" && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value));
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const validDate = (value: unknown): value is string => typeof value === "string" && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 
 /** A copy that shares nothing with the original, so a caller cannot change what Yjs holds. */
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -143,6 +146,24 @@ export class Comments {
     }
   }
 
+  /** A text anchor must name text in this document, in order, and match its quote. */
+  private checkInDocument(anchor: Anchor): void {
+    if (anchor.type !== "text") return;
+    const at = (json: object) => {
+      try {
+        return Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(json), this.ydoc);
+      } catch {
+        return null;
+      }
+    };
+    const from = at(anchor.start);
+    const to = at(anchor.end);
+    const unit = from?.type;
+    if (!(unit instanceof Y.Text) || !from || !to || to.type !== unit || to.index <= from.index || textOf(unit).slice(from.index, to.index) !== anchor.text) {
+      throw new CommentsError("INVALID_ANCHOR", "a text anchor must name text in this document, in order, matching its quoted text");
+    }
+  }
+
   private message(text: string, explicit: unknown, actor: Actor): Message {
     return {
       id: globalThis.crypto.randomUUID(),
@@ -156,7 +177,7 @@ export class Comments {
   private readMessage(raw: unknown): Message {
     const m = (raw ?? {}) as Record<string, unknown>;
     const author = readAuthor(m.author);
-    if (typeof m.id !== "string" || m.id === "" || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY) {
+    if (typeof m.id !== "string" || !ID.test(m.id) || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY) {
       throw new Error("a message has no id, ISO time, valid author, or body");
     }
     if (!Array.isArray(m.mentions) || m.mentions.length > MAX_MENTIONS || !m.mentions.every(validHandle)) throw new Error("a message has bad mentions");
@@ -166,22 +187,23 @@ export class Comments {
   /** A thread with a bad anchor or status is malformed. A bad message is skipped and named in `issues`. */
   private read(id: string, fields: unknown): { thread: Thread; issues: string[] } {
     try {
-      if (id === "") throw new Error("the thread id is empty");
+      if (!ID.test(id)) throw new Error("the thread id is not short and plain");
       if (!(fields instanceof Y.Map)) throw new Error("the thread is not a map");
       const state = (fields.get("state") ?? {}) as Record<string, unknown>;
       const by = readAuthor(state.by);
       if (!STATUSES.includes(state.status as string) || !by || !validDate(state.at)) throw new Error("the thread status is not valid");
       const list = fields.get("messages");
       if (!(list instanceof Y.Array)) throw new Error("the thread has no message list");
-      if (list.length > MAX_MESSAGES) throw new Error(`the thread has more than ${MAX_MESSAGES} messages`);
       const messages: Message[] = [];
       const issues: string[] = [];
-      const seen = new Set<string>();
-      list.toArray().forEach((raw, index) => {
+      const raw = list.toArray().slice(0, READ_LIMIT);
+      if (list.length > READ_LIMIT) issues.push(`${list.length - READ_LIMIT} messages past the read limit are not shown`);
+      const counts = new Map<unknown, number>();
+      for (const m of raw) counts.set((m as { id?: unknown } | null)?.id, (counts.get((m as { id?: unknown } | null)?.id) ?? 0) + 1);
+      raw.forEach((entry, index) => {
         try {
-          const message = this.readMessage(raw);
-          if (seen.has(message.id)) throw new Error("a message id repeats");
-          seen.add(message.id);
+          const message = this.readMessage(entry);
+          if (counts.get(message.id)! > 1) throw new Error("a message id repeats");
           messages.push(message);
         } catch (error) {
           issues.push(`message ${index} skipped: ${(error as Error).message}`);
@@ -190,12 +212,12 @@ export class Comments {
       if (messages.length === 0) throw new Error("the thread has no valid message");
       return { thread: { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages }, issues };
     } catch (error) {
-      throw new CommentsError("CORRUPT", `thread "${id}" is malformed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   private fields(id: unknown): { id: string; fields: Fields } {
-    if (typeof id !== "string" || id === "" || !this.map.has(id)) throw new CommentsError("NO_THREAD", `no thread with id "${String(id)}"`);
+    if (typeof id !== "string" || !ID.test(id) || !this.map.has(id)) throw new CommentsError("NO_THREAD", `no thread with id ${shown(id)}`);
     return { id, fields: this.map.get(id) as Fields };
   }
 
@@ -204,6 +226,7 @@ export class Comments {
     const who = assertActor(actor);
     const given = exact(input, ["anchor", "body", "mentions"], "a new thread");
     const anchor = this.parseAnchor(given.anchor);
+    this.checkInDocument(anchor);
     const first = this.message(body(given.body), given.mentions, who);
     const id = globalThis.crypto.randomUUID();
     this.ydoc.transact(() => {
@@ -228,10 +251,10 @@ export class Comments {
     const { id, fields } = this.fields(threadId);
     const text = body(given.body);
     if (this.read(id, fields).thread.status === "resolved") {
-      throw new CommentsError("THREAD_RESOLVED", `thread "${id}" is resolved; reopen it to reply`);
+      throw new CommentsError("THREAD_RESOLVED", `thread ${shown(id)} is resolved; reopen it to reply`);
     }
     const list = fields.get("messages") as Y.Array<Message>;
-    if (list.length >= MAX_MESSAGES) invalid(`thread "${id}" holds ${MAX_MESSAGES} messages and takes no more`);
+    if (list.length >= MAX_MESSAGES) invalid(`thread ${shown(id)} holds ${MAX_MESSAGES} messages and takes no more`);
     const message = this.message(text, given.mentions, who);
     list.push([copy(message)]);
     return message;
@@ -285,9 +308,9 @@ export class Comments {
       try {
         const { thread, issues } = this.read(id, fields);
         threads.push(thread);
-        for (const reason of issues) problems.push({ id, reason });
+        for (const reason of issues) problems.push({ id: id.slice(0, 64), reason });
       } catch (error) {
-        problems.push({ id, reason: (error as Error).message });
+        problems.push({ id: id.slice(0, 64), reason: (error as Error).message });
       }
     }
     return { threads, problems };

@@ -1,4 +1,5 @@
 import { CommentsError } from "./errors.js";
+import { HIDDEN } from "./text.js";
 
 export const PRINCIPAL_KINDS = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"] as const;
 export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
@@ -66,7 +67,7 @@ export function readAuthor(value: unknown): Author | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { kind, name } = value as { kind?: unknown; name?: unknown };
   if (!PRINCIPAL_KINDS.includes(kind as PrincipalKind)) return undefined;
-  if (typeof name !== "string" || name === "" || name !== name.trim() || name.length > MAX_NAME || /[\p{Cc}\p{Cf}]/u.test(name)) return undefined;
+  if (typeof name !== "string" || name === "" || name !== name.trim() || name.length > MAX_NAME || HIDDEN.test(name)) return undefined;
   return { kind: kind as PrincipalKind, name };
 }
 

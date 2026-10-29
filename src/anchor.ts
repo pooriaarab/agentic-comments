@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import { CommentsError } from "./errors.js";
+import { HIDDEN } from "./text.js";
 
 /** A Yjs relative position as JSON. It names an item, not an index, so it follows its text. */
 export interface RelativePositionJson {
@@ -11,7 +12,7 @@ export interface RelativePositionJson {
 
 export interface TextAnchor {
   type: "text";
-  /** The text under the range when the comment was made. This check does not compare it with the document. */
+  /** The text under the range when the comment was made. `Comments.add` checks it against the document. */
   text: string;
   start: RelativePositionJson;
   end: RelativePositionJson;
@@ -53,7 +54,7 @@ const bad = (message: string): never => {
 };
 
 function key(raw: unknown, field: string): string {
-  if (typeof raw !== "string" || raw.trim() === "" || raw.length > MAX_KEY) bad(`${field} must be text of 1 to ${MAX_KEY} characters`);
+  if (typeof raw !== "string" || raw.trim() === "" || raw.length > MAX_KEY || HIDDEN.test(raw)) bad(`${field} must be text of 1 to ${MAX_KEY} characters, with no control or invisible characters`);
   return raw as string;
 }
 

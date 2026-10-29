@@ -205,7 +205,8 @@ describe("anchors", () => {
     const stored = make(a).get(thread.id).anchor;
     if (stored.type !== "text") throw new Error("expected a text anchor");
     const from = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(stored.start), a);
-    expect(from?.index).toBe(8);
+    const to = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(stored.end), a);
+    expect([from?.index, to?.index]).toEqual([8, 13]);
   });
 });
 
@@ -385,21 +386,19 @@ describe("review findings", () => {
     expect(code(() => comments.get(id))).toBe("CORRUPT");
   });
 
-  test("stored messages with a loose time, an empty or repeated id, or bad mentions are skipped", () => {
+  test("stored messages with a loose time, an empty id, or bad mentions are skipped", () => {
     const doc = new Y.Doc();
     const comments = make(doc);
     const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
-    const first = comments.get(id).messages[0];
     rawMessages(doc, id).push([
       rawMessage({ at: "1" }),
       rawMessage({ at: "Tue" }),
       rawMessage({ id: "" }),
-      rawMessage({ id: first.id }),
       rawMessage({ mentions: ["two words"] }),
       rawMessage({ mentions: Array.from({ length: 51 }, (_, i) => `u${i}`) }),
     ]);
     expect(comments.get(id).messages).toHaveLength(1);
-    expect(comments.problems()).toHaveLength(6);
+    expect(comments.problems()).toHaveLength(5);
   });
 
   test("a thread key that get refuses is not listed", () => {
@@ -517,9 +516,9 @@ describe("second review findings", () => {
       list.push([{ id: `m-${id}`, at, author: { kind: "human", name: "eve" }, body: "x", mentions: [] }]);
     };
     raw("late", "2026-01-01T00:00:00.500Z");
-    raw("early", "2026-01-01T00:00:00Z");
+    raw("early", "2026-01-01T00:00:00.050Z");
     raw("tie-b", "2026-01-01T00:00:01.000Z");
-    raw("tie-a", "2026-01-01T00:00:01Z");
+    raw("tie-a", "2026-01-01T00:00:01.000Z");
     expect(comments.list().map((t) => t.id)).toEqual(["early", "late", "tie-a", "tie-b"]);
   });
 
@@ -543,8 +542,11 @@ describe("second review findings", () => {
   });
 
   test("no agent kind is labeled a person", () => {
-    const labels = Object.fromEntries(PRINCIPAL_KINDS.map((kind) => [kind, authorLabel({ kind, name: "n" })]));
-    expect(labels).toEqual({ human: "person", user_token: "person via agent", agent_of_human: "agent", agent_of_agent: "agent", agent: "agent" });
+    for (const kind of PRINCIPAL_KINDS) {
+      const asPerson = authorLabel({ kind, name: "n" }).startsWith("person");
+      expect(asPerson).toBe(kind === "human" || kind === "user_token");
+    }
+    expect(authorLabel({ kind: "user_token", name: "n" })).toContain("agent");
   });
 
   test("a handle keeps its non-ASCII letters", () => {
@@ -552,14 +554,93 @@ describe("second review findings", () => {
     expect(thread.messages[0].mentions).toEqual(["josé", "zoë"]);
   });
 
-  test("a thread over the message cap is refused on write and malformed on read", () => {
+  test("a thread at the message cap refuses a local reply, and two replicas that reply at once both keep it", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const { id } = make(a).add({ anchor: cell, body: "hi" }, ada);
+    const list = a.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
+    list.push(Array.from({ length: 999 }, (_, i) => ({ id: `m${i}`, at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] })));
+    expect(code(() => make(a).reply(id, { body: "one too many" }, bot))).toBe("INVALID_INPUT");
+    list.delete(999, 1);
+    sync(a, b);
+    make(a).reply(id, { body: "from a" }, ada);
+    make(b).reply(id, { body: "from b" }, bot);
+    sync(a, b);
+    expect(make(a).get(id).messages).toHaveLength(1_000 + 1);
+    expect(make(b).get(id).messages.map((m) => m.body)).toEqual(make(a).get(id).messages.map((m) => m.body));
+  });
+
+  test("a thread past the read limit shows the first messages and reports the rest", () => {
     const doc = new Y.Doc();
     const comments = make(doc);
     const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
     const list = doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
-    list.push(Array.from({ length: 999 }, (_, i) => ({ id: `m${i}`, at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] })));
-    expect(code(() => comments.reply(id, { body: "one too many" }, bot))).toBe("INVALID_INPUT");
-    list.push([{ id: "extra", at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] }]);
-    expect(code(() => comments.get(id))).toBe("CORRUPT");
+    list.push(Array.from({ length: 2_000 }, (_, i) => ({ id: `m${i}`, at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] })));
+    expect(comments.get(id).messages).toHaveLength(2_000);
+    expect(comments.problems().length).toBeGreaterThan(0);
+  });
+
+  test("explicit mentions follow the handle grammar", () => {
+    const comments = make();
+    for (const mentions of [["ad\u200Bmin"], ["\u202Eevil"], ["<img>"], ["bob,"], ["a".repeat(65)], ["a@b.org"]]) {
+      expect(code(() => comments.add({ anchor: cell, body: "hi", mentions }, ada))).toBe("INVALID_INPUT");
+    }
+  });
+
+  test("anchor keys and element ids refuse control and invisible characters", () => {
+    const comments = make();
+    for (const anchor of [{ type: "cell", key: "a\u0000b" }, { type: "cell", key: "a\u202Eb" }, { type: "canvas", elementId: "x\u200By" }]) {
+      expect(code(() => comments.add({ anchor: anchor as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    }
+  });
+
+  test("a text anchor must point into this document, in order, at its quoted text", () => {
+    const a = new Y.Doc();
+    a.getText("t").insert(0, "hello brave world");
+    const comments = make(a);
+    const other = new Y.Doc();
+    other.getText("t").insert(0, "hello brave world");
+    expect(code(() => comments.add({ anchor: textAnchor(other.getText("t"), 6, 11), body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    const early = textAnchor(a.getText("t"), 0, 5);
+    const late = textAnchor(a.getText("t"), 12, 17);
+    expect(code(() => comments.add({ anchor: { ...early, start: late.start }, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    expect(code(() => comments.add({ anchor: { ...early, text: "other" }, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    expect(comments.add({ anchor: late, body: "ok" }, ada).anchor).toEqual(late);
+  });
+
+  test("an impossible date is refused on read", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push([
+      { id: "feb", at: "2026-02-31T00:00:00.000Z", author: { kind: "human", name: "eve" }, body: "x", mentions: [] },
+    ]);
+    expect(comments.get(id).messages).toHaveLength(1);
+  });
+
+  test("a repeated message id hides every copy, so a peer cannot choose which one shows", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "real" }, ada);
+    comments.reply(id, { body: "second" }, bot);
+    const first = comments.get(id).messages[0];
+    const list = doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
+    list.insert(0, [{ id: first.id, at: ISO, author: { kind: "human", name: "eve" }, body: "fake", mentions: [] }]);
+    expect(comments.get(id).messages.map((m) => m.body)).toEqual(["second"]);
+  });
+
+  test("ids from storage must be short and plain", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push([
+      { id: "x".repeat(65), at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] },
+      { id: "a\nb", at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] },
+    ]);
+    expect(comments.get(id).messages).toHaveLength(1);
+    const long = "k".repeat(5_000);
+    doc.getMap<Y.Map<unknown>>("comments.threads").set(long, new Y.Map());
+    expect(comments.problems().every((p) => p.id.length <= 64 && p.reason.length < 300)).toBe(true);
+    expect(code(() => comments.get(long))).toBe("NO_THREAD");
   });
 });
