@@ -419,7 +419,7 @@ describe("records and edits that go wrong", () => {
     expect(r.text()).toBe("Xhello brave world");
   });
 
-  test("an async apply that edits before it returns is recorded, and one that edits nothing is refused", () => {
+  test("an async apply that edits before it returns is recorded", () => {
     const edits = replica({ idempotent: true, apply: (async (_c: unknown, ctx: { ydoc: Y.Doc }) => { ctx.ydoc.getText("t").insert(0, "X"); }) as never });
     const s = edits.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
     expect(edits.suggestions.accept(s.id, ada).status).toBe("accepted");
@@ -439,20 +439,23 @@ describe("records and edits that go wrong", () => {
     expect(counter.applies).toBe(0);
   });
 
-  test("a token that an agent holds cannot decide the agent's own suggestion", () => {
+  test("a token needs the accept scope, and an agent that holds one cannot decide its own suggestion", () => {
     const r = replica(textHost());
-    const token = stamp({ kind: "user_token", name: "scribe" });
-    const own = r.suggestions.add({ anchor: textAnchor(r.ydoc.getText("t"), 6, 11), change: { replacement: "bold" } }, token);
-    expect(code(() => r.suggestions.accept(own.id, token))).toBe("FORBIDDEN");
-    expect(code(() => r.suggestions.reject(own.id, token))).toBe("FORBIDDEN");
+    const noScope = stamp({ kind: "user_token", name: "ada" });
+    const ownToken = stamp({ kind: "user_token", name: "scribe", scopes: [ACCEPT_SCOPE] });
+    const withScope = stamp({ kind: "user_token", name: "ada", scopes: [ACCEPT_SCOPE] });
     const byAgent = suggest(r, bot);
-    expect(r.suggestions.accept(byAgent.id, stamp({ kind: "user_token", name: "ada" })).decidedBy).toEqual({ kind: "user_token", name: "ada" });
+    expect(code(() => r.suggestions.accept(byAgent.id, noScope))).toBe("FORBIDDEN");
+    expect(code(() => r.suggestions.accept(byAgent.id, ownToken))).toBe("FORBIDDEN");
+    expect(code(() => r.suggestions.reject(byAgent.id, ownToken))).toBe("FORBIDDEN");
+    expect(r.suggestions.accept(byAgent.id, withScope).decidedBy).toEqual({ kind: "user_token", name: "ada" });
   });
 
-  test("a person may decide their own suggestion through a token", () => {
+  test("a signed-in person may decide their own suggestion, and a token for them needs the scope", () => {
     const r = replica(textHost());
     const s = r.suggestions.add({ anchor: textAnchor(r.ydoc.getText("t"), 6, 11), change: { replacement: "bold" } }, ada);
-    expect(r.suggestions.accept(s.id, stamp({ kind: "user_token", name: "ada" })).status).toBe("accepted");
+    expect(code(() => r.suggestions.accept(s.id, stamp({ kind: "user_token", name: "ada" })))).toBe("FORBIDDEN");
+    expect(r.suggestions.accept(s.id, stamp({ kind: "user_token", name: "ada", scopes: [ACCEPT_SCOPE] })).status).toBe("accepted");
   });
 
   test("apply never sees an anchor that no longer matches the document, even for a host that does not check", () => {
@@ -486,3 +489,107 @@ describe("records and edits that go wrong", () => {
   });
 });
 
+describe("peer records, outer transactions, and contexts", () => {
+  const cellAnchor = { type: "cell", key: "A1" } as const;
+
+  test("keys that spell a client id another way are not counted, and never reach revert", () => {
+    const reverted: unknown[] = [];
+    const r = replica({ idempotent: false, apply: () => null, revert: (receipt) => void reverted.push(receipt) });
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    const applied = r.ydoc.getMap("comments.suggestion-applied");
+    const record = { by: { kind: "human", name: "mallory" }, at: "2026-01-01T00:00:00.000Z", receipt: { evil: true } };
+    for (const tail of ["", "0x0", " 0", "9e15", "05", "4294967296", "-1", "1.5"]) applied.set(`${s.id}:${tail}`, record);
+    r.suggestions.settle();
+    expect(r.suggestions.get(s.id).status).toBe("pending");
+    expect(reverted).toEqual([]);
+  });
+
+  test("a well-formed record from a peer is counted, so the sync layer must decide who may write", () => {
+    const r = replica(textHost());
+    const s = suggest(r);
+    r.ydoc.getMap("comments.suggestion-applied").set(`${s.id}:1`, { by: { kind: "human", name: "mallory" }, at: "2026-01-01T00:00:00.000Z", receipt: null });
+    expect(r.suggestions.get(s.id).decidedBy).toEqual({ kind: "human", name: "mallory" });
+  });
+
+  test("accept inside another transaction is refused, and writes nothing", () => {
+    const r = replica(textHost());
+    const s = suggest(r);
+    let result: string | undefined;
+    r.ydoc.transact(() => {
+      r.ydoc.getMap("other").set("k", 1);
+      result = code(() => r.suggestions.accept(s.id, ada));
+    });
+    expect(result).toBe("APPLY_FAILED");
+    expect(r.suggestions.get(s.id).status).toBe("pending");
+    expect(r.text()).toBe("hello brave world");
+  });
+
+  test("a record with no receipt never loses, so its edit is not left in twice", () => {
+    const hostFor = (fail: boolean): SuggestionHost => ({
+      apply(_change, ctx) {
+        const text = ctx.ydoc.getText("t");
+        text.insert(0, "X");
+        if (fail) throw new Error("late failure");
+        return {
+          start: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, 0, 0)),
+          end: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, 1, -1)),
+        };
+      },
+      revert(receipt, ctx) {
+        const { start, end } = receipt as { start: object; end: object };
+        const from = absolute(start, ctx.ydoc);
+        const to = absolute(end, ctx.ydoc);
+        if (from && to && from.type instanceof Y.Text && to.index > from.index) from.type.delete(from.index, to.index - from.index);
+      },
+    });
+    for (const failingFirst of [true, false]) {
+      const a = replica(hostFor(failingFirst));
+      const s = a.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+      const b = replica(hostFor(!failingFirst), a.ydoc);
+      a.suggestions.accept(s.id, ada);
+      b.suggestions.accept(s.id, grace);
+      sync(a.ydoc, b.ydoc);
+      expect(a.text()).toBe("Xhello brave world");
+      expect(b.text()).toBe("Xhello brave world");
+      expect(b.suggestions.get(s.id)).toEqual(a.suggestions.get(s.id));
+    }
+  });
+
+  test("revert learns the anchor, the author, and who made the application it undoes", () => {
+    const seen: { anchor: string; author: string; by: string }[] = [];
+    const base = textHost();
+    const spy: SuggestionHost = { ...base, revert: (receipt, ctx) => { seen.push({ anchor: ctx.anchor.type, author: ctx.author.name, by: `${ctx.by.kind}:${ctx.by.name}` }); base.revert!(receipt, ctx); } };
+    const a = replica(spy);
+    const s = suggest(a);
+    const b = replica(spy, a.ydoc);
+    a.suggestions.accept(s.id, ada);
+    b.suggestions.accept(s.id, grace);
+    sync(a.ydoc, b.ydoc);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(new Set(seen.map((x) => `${x.anchor}|${x.author}`))).toEqual(new Set(["text|scribe"]));
+    expect(seen.every((x) => x.by === "human:ada" || x.by === "human:grace")).toBe(true);
+  });
+
+  test("apply cannot change who decided, because its copy of the decider is frozen", () => {
+    const r = replica({ idempotent: true, apply: (_c, ctx) => { try { (ctx.by as { kind: string }).kind = "human"; } catch { /* frozen */ } return null; } });
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    expect(r.suggestions.accept(s.id, reviewer).decidedBy).toEqual({ kind: "agent", name: "reviewer" });
+  });
+
+  test("settle runs when the suggestion arrives after its application records", () => {
+    const reverted: number[] = [];
+    const host: SuggestionHost = { apply: () => null, revert: () => void reverted.push(1) };
+    const source = replica(host);
+    const s = source.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    const target = new Y.Doc();
+    const comments = new Comments(target, { now: clock });
+    const suggestions = new Suggestions(comments, host);
+    const record = { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: null };
+    target.getMap("comments.suggestion-applied").set(`${s.id}:1`, record);
+    target.getMap("comments.suggestion-applied").set(`${s.id}:2`, record);
+    expect(reverted).toEqual([]);
+    Y.applyUpdate(target, Y.encodeStateAsUpdate(source.ydoc));
+    expect(reverted).toEqual([1]);
+    expect(suggestions.get(s.id).status).toBe("accepted");
+  });
+});

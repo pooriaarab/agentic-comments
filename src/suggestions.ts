@@ -41,6 +41,11 @@ export interface ApplyContext {
 
 export interface RevertContext {
   suggestionId: string;
+  anchor: Anchor;
+  /** Who wrote the suggestion. */
+  author: Author;
+  /** Who made the application being undone. */
+  by: Author;
   ydoc: Y.Doc;
 }
 
@@ -62,7 +67,8 @@ export interface SuggestionHost {
    * Two replicas can accept one suggestion before they meet. Each applies the edit. After a merge one
    * application stays and `revert` undoes each other. Every replica runs it at the same time, and the
    * results must merge to one outcome, as a Yjs delete of the same range does. Throw before you change
-   * anything. A receipt comes from stored data, so check it before you use it.
+   * anything. A receipt comes from stored data. A peer that can write comment data can choose it, so
+   * check it against `context.anchor` before you use it.
    */
   revert?(receipt: unknown, context: RevertContext): void;
   /** Say that applying the same change twice is harmless. Then no `revert` is needed. */
@@ -87,14 +93,14 @@ interface Decision {
   receipt?: unknown;
 }
 
-/** A person, or a token that acts as a person. Neither needs the accept scope. */
-const isPerson = (who: Author): boolean => who.kind === "human" || who.kind === "user_token";
-
 /**
- * Someone who is not a person decides their own work when the names match, whatever the kinds. A token
- * counts here, because an agent holds it. A signed-in person may decide their own. This fails closed.
+ * Someone who is not a signed-in person decides their own work when the names match, whatever the
+ * kinds. A token counts here, because an agent holds it. A signed-in person may decide their own.
  */
 const decidesOwn = (author: Author, decider: Author): boolean => author.kind !== "human" && decider.kind !== "human" && author.name === decider.name;
+
+/** A client id in its one canonical form: whole digits, no sign, no leading zero, within 32 bits. */
+const clientOf = (text: string): number | undefined => (/^(0|[1-9]\d{0,9})$/.test(text) && Number(text) <= 0xffffffff ? Number(text) : undefined);
 
 const thenable = (value: unknown): boolean => typeof (value as { then?: unknown } | null)?.then === "function";
 
@@ -105,7 +111,6 @@ const thenable = (value: unknown): boolean => typeof (value as { then?: unknown 
 export class Suggestions {
   private readonly onTransaction: (tr: Y.Transaction) => void;
   private failures: { id: string; reason: string }[] = [];
-  private readonly applying = new Set<string>();
 
   constructor(
     private readonly comments: Comments,
@@ -114,8 +119,10 @@ export class Suggestions {
     if (typeof host?.apply !== "function" || (typeof host.revert !== "function" && host.idempotent !== true)) {
       invalid("a host needs apply, and either revert or idempotent: true, so two accepts at once cannot apply a change twice");
     }
+    // Create the three maps now. A map that first appears inside an update is a placeholder, and its events would not match.
+    void [this.map, this.applied, this.rejected];
     this.onTransaction = (tr) => {
-      if (!tr.local && tr.changedParentTypes.has(this.applied as Y.AbstractType<any>)) this.settle();
+      if (!tr.local && [this.applied, this.map].some((type) => tr.changedParentTypes.has(type as Y.AbstractType<any>))) this.settle();
     };
     this.ydoc.on("afterTransaction", this.onTransaction);
     this.settle();
@@ -159,10 +166,10 @@ export class Suggestions {
     const out: Decision[] = [];
     for (const [key, raw] of map.entries()) {
       if (!key.startsWith(`${id}:`)) continue;
-      const client = Number(key.slice(id.length + 1));
+      const client = clientOf(key.slice(id.length + 1));
       const r = (raw ?? {}) as Record<string, unknown>;
       const by = readAuthor(r.by);
-      if (!Number.isSafeInteger(client) || client < 0 || !by || !validDate(r.at) || !author || decidesOwn(author, by)) continue;
+      if (client === undefined || !by || !validDate(r.at) || !author || decidesOwn(author, by)) continue;
       let receipt: unknown = null;
       try {
         receipt = r.receipt === undefined ? null : strictCopy(r.receipt);
@@ -172,7 +179,7 @@ export class Suggestions {
       }
       out.push({ client, by, at: r.at, receipt });
     }
-    return out.sort((a, b) => a.client - b.client);
+    return out.sort((a, b) => Number(a.receipt !== null) - Number(b.receipt !== null) || a.client - b.client);
   }
 
   private read(id: string, fields: unknown): Suggestion {
@@ -237,8 +244,8 @@ export class Suggestions {
 
   /** A person decides. An agent needs the accept scope, and never decides its own suggestion. */
   private mayDecide(who: Actor, s: Suggestion, verb: string): void {
-    const ok = !decidesOwn(s.author, who) && (isPerson(who) || who.scopes.includes(ACCEPT_SCOPE));
-    if (!ok) throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${verb} this suggestion: a person, or an agent with the ${ACCEPT_SCOPE} scope that did not write it, can`);
+    const ok = !decidesOwn(s.author, who) && (who.kind === "human" || who.scopes.includes(ACCEPT_SCOPE));
+    if (!ok) throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${verb} this suggestion: a signed-in person, or a principal with the ${ACCEPT_SCOPE} scope that did not write it, can`);
   }
 
   /**
@@ -247,41 +254,38 @@ export class Suggestions {
    */
   accept(suggestionId: string, actor: Actor): Suggestion {
     const who = assertActor(actor);
+    if ((this.ydoc as unknown as { _transaction: unknown })._transaction !== null) {
+      throw new CommentsError("APPLY_FAILED", "accept cannot run inside another Yjs transaction, such as an observer or an apply hook");
+    }
     const { id, fields } = this.fields(suggestionId);
     const s = this.read(id, fields);
     this.mayDecide(who, s, "accept");
     if (s.status === "accepted") return s;
     if (s.status === "rejected") throw new CommentsError("ALREADY_DECIDED", `suggestion ${shown(id)} is already rejected`);
-    if (this.applying.has(id)) throw new CommentsError("APPLY_FAILED", `suggestion ${shown(id)} is being applied, and apply cannot accept it again`);
     const by: Author = { kind: who.kind, name: who.name };
     const at = this.comments.time();
-    this.applying.add(id);
-    try {
-      this.ydoc.transact((tr) => {
-        const edited = () => tr.changed.size > 0 || tr.deleteSet.clients.size > 0;
-        let receipt: unknown = null;
-        let failure: unknown;
-        try {
-          this.comments.checkAnchor(s.anchor);
-          const change = this.change(s.change);
-          receipt = this.host.apply(change, { suggestionId: id, anchor: s.anchor, author: s.author, by, ydoc: this.ydoc });
-          if (thenable(receipt)) throw new Error("apply must finish at once and cannot return a promise");
-          receipt = receipt === undefined ? null : strictCopy(receipt);
-          if (JSON.stringify(receipt).length > MAX_RECEIPT) throw new Error(`a receipt holds up to ${MAX_RECEIPT} characters of JSON`);
-        } catch (error) {
-          failure = error;
-          receipt = null;
-        }
-        if (failure !== undefined) {
-          const reason = safeText(failure instanceof Error ? failure.message : failure);
-          if (!edited()) throw new CommentsError("APPLY_FAILED", `the change could not be applied: ${reason}`);
-          this.failures.push({ id: safeId(id), reason: `apply failed after it edited the document, so the decision is recorded without a receipt: ${reason}` });
-        }
-        this.applied.set(`${id}:${this.ydoc.clientID}`, { by, at, receipt });
-      });
-    } finally {
-      this.applying.delete(id);
-    }
+    this.ydoc.transact((tr) => {
+      const edited = () => tr.changed.size > 0 || tr.deleteSet.clients.size > 0;
+      let receipt: unknown = null;
+      let failure: unknown;
+      try {
+        this.comments.checkAnchor(s.anchor);
+        const change = this.change(s.change);
+        receipt = this.host.apply(change, { suggestionId: id, anchor: copy(s.anchor), author: Object.freeze({ ...s.author }), by: Object.freeze({ ...by }), ydoc: this.ydoc });
+        if (thenable(receipt)) throw new Error("apply must finish at once and cannot return a promise");
+        receipt = receipt === undefined ? null : strictCopy(receipt);
+        if (JSON.stringify(receipt).length > MAX_RECEIPT) throw new Error(`a receipt holds up to ${MAX_RECEIPT} characters of JSON`);
+      } catch (error) {
+        failure = error;
+        receipt = null;
+      }
+      if (failure !== undefined) {
+        const reason = safeText(failure instanceof Error ? failure.message : failure);
+        if (!edited()) throw new CommentsError("APPLY_FAILED", `the change could not be applied: ${reason}`);
+        this.failures.push({ id: safeId(id), reason: `apply failed after it edited the document, so the decision is recorded without a receipt: ${reason}` });
+      }
+      this.applied.set(`${id}:${this.ydoc.clientID}`, { by, at, receipt });
+    });
     return this.get(id);
   }
 
@@ -340,16 +344,19 @@ export class Suggestions {
       const id = key.slice(0, key.lastIndexOf(":"));
       if (ID.test(id) && this.map.has(id)) ids.add(id);
     }
-    const kept = this.failures.filter((f) => f.reason.startsWith("apply failed"));
-    this.failures = kept;
+    this.failures = this.failures.filter((f) => f.reason.startsWith("apply failed"));
     this.ydoc.transact(() => {
       for (const id of ids) {
-        const group = this.records(this.applied, id, readAuthor((this.map.get(id) as Fields | undefined)?.get?.("author")));
-        for (const loser of group.slice(1)) {
-          const key = `${id}:${loser.client}`;
+        let s: Suggestion;
+        try {
+          s = this.read(id, this.map.get(id));
+        } catch {
+          continue;
+        }
+        for (const loser of this.records(this.applied, id, s.author).slice(1)) {
           try {
-            this.host.revert?.(loser.receipt, { suggestionId: id, ydoc: this.ydoc });
-            this.applied.delete(key);
+            this.host.revert?.(loser.receipt, { suggestionId: id, anchor: copy(s.anchor), author: Object.freeze({ ...s.author }), by: Object.freeze({ ...loser.by }), ydoc: this.ydoc });
+            this.applied.delete(`${id}:${loser.client}`);
           } catch (error) {
             this.failures.push({ id: safeId(id), reason: `a duplicate application could not be reverted: ${safeText(error instanceof Error ? error.message : error)}` });
           }
