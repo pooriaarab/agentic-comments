@@ -317,7 +317,11 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
 
   // Run one write, then read again. A failure shows as it is, and the panel never retries with other input.
   const act: Act = async (key, call, done, focus) => {
-    if (writing.current) return; // one write at a time, so reads land in order and one spinner stays right
+    if (writing.current) {
+      // One write at a time, so reads land in order and one spinner stays right. Say so, and never drop a click in silence.
+      setNotice("Wait for the current action to finish, then try again.");
+      return;
+    }
     writing.current = true;
     const gen = run.current;
     const current = () => gen === run.current;

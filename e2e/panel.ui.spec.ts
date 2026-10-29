@@ -78,6 +78,28 @@ test("a write that finishes after the document changed does not paint the old do
   await expect(page.getByRole("status")).toHaveText("");
 });
 
+test("a new thread that finishes after the document changed does not clear the next form", async ({ page, request }) => {
+  const a = await seed(request);
+  const b = await seed(request);
+  await open(page, ADA, a.doc);
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route(`**/docs/${a.doc}/threads`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await held;
+    await route.continue();
+  });
+  await page.getByLabel("Quote to comment on").fill("Churn stayed flat");
+  await page.getByLabel("Comment", { exact: true }).fill("From document A");
+  await page.getByRole("button", { name: "Add comment" }).click();
+  await page.evaluate((doc) => (location.hash = `doc=${doc}`), b.doc);
+  await expect(page.getByText("Which regions drove this?")).toBeVisible();
+  await page.getByLabel("Comment", { exact: true }).fill("Typed for document B");
+  release();
+  await page.waitForTimeout(500);
+  await expect(page.getByLabel("Comment", { exact: true })).toHaveValue("Typed for document B");
+});
+
 test("a person starts a thread on a quote, and a bad quote shows the error", async ({ page, request }) => {
   const { doc } = await seed(request);
   await open(page, ADA, doc);
