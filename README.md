@@ -185,7 +185,7 @@ wrangler secret put AGENTIC_COMMENTS_TOKENS
 # {"<openssl rand -hex 32>": {"as": "human:ada", "scopes": ["comments:write"]}, "<another>": "agent_of_human:scribe"}
 ```
 
-Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it the API refuses to run. Use `unknown` with
+Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document route fails with `500 MISCONFIGURED`. Use `unknown` with
 `AGENTIC_COMMENTS_UNSAFE_REGION=1` only under `wrangler dev`. The `wrangler.jsonc` in the repo shows the D1 binding.
 
 | Scope | Allows |

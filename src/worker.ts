@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { assertRegion, isScope, parseRegion, hasScope, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
+import { StoreConflictError, assertRegion, isScope, parseRegion, hasScope, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
 import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudflare";
 import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
@@ -293,6 +293,8 @@ export function createApp(source: DocsSource, options: AppOptions = {}): Hono<Ap
   app.notFound(() => fail("NOT_FOUND", "no such route", 404));
   app.onError((error) => {
     if (error instanceof CommentsError) return fail(error.code, error.message, STATUS[error.code] ?? 400);
+    // The store ran the change again until it gave up. A retry by the client can succeed.
+    if (error instanceof StoreConflictError) return fail("CONFLICT", "the document kept changing; try again", 409);
     console.error(error instanceof Error ? error.name : "error");
     return fail("INTERNAL", "the server could not finish the request", 500);
   });

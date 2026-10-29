@@ -1,4 +1,4 @@
-import { createMemoryStore, type Auth } from "agentic-identity";
+import { createMemoryStore, StoreConflictError, type Auth } from "agentic-identity";
 import { describe, expect, test, vi } from "vitest";
 import { CommentsDocs, createApp, createTokenAuth } from "./worker.js";
 
@@ -112,6 +112,19 @@ describe("threads", () => {
     const all = await Promise.all(Array.from({ length: 6 }, (_, i) => call(ADA, "POST", "/docs/d1/threads", { anchor: { type: "cell", key: `A${i}` }, body: `n${i}` })));
     expect(all.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
     expect((await call(ADA, "GET", "/docs/d1/threads")).json).toHaveLength(6);
+  });
+
+  test("a store that keeps conflicting is 409 CONFLICT, not a 500", async () => {
+    const store = createMemoryStore({ region: "unknown" });
+    const app = createApp(new CommentsDocs(store));
+    const env = { AGENTIC_COMMENTS_TOKENS: TOKENS };
+    const headers = { authorization: `Bearer ${ADA}`, "content-type": "application/json" };
+    await app.request("/api/v1/docs", { method: "POST", headers, body: JSON.stringify({ id: "d1", text: "abc" }) }, env);
+    store.transaction = async () => {
+      throw new StoreConflictError();
+    };
+    const res = await app.request("/api/v1/docs/d1/threads", { method: "POST", headers, body: JSON.stringify({ anchor: { type: "cell", key: "A1" }, body: "x" }) }, env);
+    expect([res.status, ((await res.json()) as any).error.code]).toEqual([409, "CONFLICT"]);
   });
 
   test("errors are JSON with a code and the right status", async () => {
