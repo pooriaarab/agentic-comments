@@ -18,7 +18,7 @@ Usage: agentic-comments-mcp [--help | --version]`;
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   console.log(MCP_HELP);
-} else if (args.includes("--version") || args.includes("-v")) {
+} else if (args.includes("--version") || args.includes("-V") || args.includes("-v")) {
   console.log(VERSION);
 } else {
   /** Start the server from the environment: AGENTIC_COMMENTS_FILE, AGENTIC_COMMENTS_AS, AGENTIC_COMMENTS_SCOPES. */
