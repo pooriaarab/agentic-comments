@@ -208,7 +208,7 @@ export class CommentsDocs {
 
   /**
    * For the account plug-in: runs `fn` on each stored document, with its `Comments` and `Suggestions`. With `save`,
-   * each document runs in one transaction and the state is written back there, A throw leaves it as it was. A document deleted since the list was read is skipped.
+   * each document runs in one transaction and the state is written back there. A throw leaves it as it was. A document deleted since the list was read is skipped.
    * A damaged document stops the run with CORRUPT.
    */
   async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void> {
@@ -265,13 +265,15 @@ export class CommentsDocs {
     await this.scan(author, async (id) => void ids.push(id), unread);
     let count = 0;
     for (const id of ids) {
-      await this.store.transaction(async (tx) => {
+      // The count is made after the commit: a store may run the function again, so it holds no side effect.
+      const changed = await this.store.transaction(async (tx) => {
         const row = (await tx.get(DOCS, id)) as { createdBy?: unknown } | null;
         const by = readAuthor(row?.createdBy);
-        if (!row || !by || by.kind !== author.kind || by.name !== author.name) return;
+        if (!row || !by || by.kind !== author.kind || by.name !== author.name) return false;
         await tx.put(DOCS, id, { ...row, createdBy: { kind: by.kind, name: ERASED_NAME } } as never);
-        count++;
+        return true;
       });
+      if (changed) count++;
     }
     return { count, unread };
   }

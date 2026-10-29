@@ -91,20 +91,25 @@ the read keeps the erased copy, or else the latest edit. An edit and a delete ma
 `import { commentsAccount } from "agentic-comments/account"` lets a host export and erase one person's data
 without reading the storage layout. Pass the subject (`{ kind, name }`) and `{ documents, actor }`. Each
 document is `{ id, comments, suggestions }`. The actor is made with `stamp()` and must name the subject.
-`exportAccount` returns JSON records in `messages`, `statusChanges`, `edits`, `suggestions`, `decisions`, and
-`documents`, and `unread`. `eraseAccount` tombstones the same data as `erasePerson` and returns counts. A second erase counts 0.
+`exportAccount` returns JSON records in `messages`, `statusChanges`, `edits`, `suggestions`, `decisions`,
+`documents`, and `unread`. `eraseAccount` tombstones the same data as `erasePerson` and returns counts. A second
+erase counts 0.
+
 The package keeps no grants or audit rows. A host that runs the HTTP worker passes `worker: docs` (the
 `CommentsDocs` of the worker). Then the run also covers every stored document: the subject's messages and
-suggestions in it, and the creator that the worker keeps on each row, listed under `documents` and given the
-tombstone name on erase. Each stored document is erased in one transaction. A row whose creator cannot be read
-shows in `unread`. A stored document that `documents` also lists is refused. A store that loses a race gives
-`CONFLICT`: run the erase again. Without `worker`, that data stays. A run covers only the subject's own kind:
-`human:ada` does not reach `agent_of_human:ada`. Names and mentions of the subject inside other people's
-messages are neither exported nor erased. Records can name other people, such as the moderator in `editedBy`
-or the person in `decidedBy`. A record in `unread` means the export is not complete: the store holds entries
-of the subject that a read cannot show. A missing `documents` list is an error, not an empty run. Erase goes
-document by document. If one fails, the error names it, the earlier documents stay erased, and a repeat counts
-only what is left. The counts of a failed run are lost.
+suggestions in it, and the creator that the worker keeps on each row. The creators are listed under `documents`
+and get the tombstone name on erase. Without `worker`, that data stays. A stored document is erased in one
+transaction. A stored document that `documents` also lists is refused, before any write. The check compares ids
+only. A row whose creator cannot be read shows in `unread` of the export, and in the `unread` count of the erase,
+which leaves the row in place. A store that loses a race gives `CONFLICT`: run the erase again.
+
+A run covers only the subject's own kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions of
+the subject inside other people's messages are neither exported nor erased. Records can name other people, such
+as the moderator in `editedBy` or the person in `decidedBy`. A record in `unread` means the export is not
+complete: the store holds entries of the subject that a read cannot show. A missing `documents` list is an
+error, not an empty run. Erase goes document by document. If one fails, the error names it and the earlier
+documents stay erased. A failed document in `documents` may be partly erased (its threads and its suggestions
+are two steps). A repeat counts only what is left. The counts of a failed run are lost.
 
 ## Anchors for plain text
 
