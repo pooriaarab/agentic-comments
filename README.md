@@ -177,7 +177,7 @@ npx agentic-comments accept <id>
   `suggest`, `accept`, `reject`, `mcp`. Run `npx agentic-comments --help` for flags.
 - Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
   exits 2.
-- The principal comes from `--as` or `AGENTIC_COMMENTS_AS`, as `kind:name`. The name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`. Scopes come only from
+- The principal comes from `--as` or `AGENTIC_COMMENTS_AS`, as `kind:name`. The name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters. Scopes come only from
   `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author,
   and a flag that does not apply to a command is refused. `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS` sets the wait
   for a lock, in whole milliseconds.
@@ -201,6 +201,9 @@ Set the principals as a secret. It is JSON from a bearer token to `kind:name`, o
 `{ "as": "kind:name", "scopes": [...] }`. A token is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`, so a base64 token with `+` or `/` is refused.
 A name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters.
 One bad entry refuses the whole table. A request with no valid token gets `401`.
+A request whose `Authorization` header is not `Bearer` plus a token of that shape gets `401`, before any custom `Auth` runs.
+A write with no `Authorization` header (a session cookie, for example) gets `403` unless its `Origin` is in the `origins`
+option of `createApp`. The default lists none.
 
 ```sh
 wrangler secret put AGENTIC_COMMENTS_TOKENS
