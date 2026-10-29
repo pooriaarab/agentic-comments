@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
-import { StoreConflictError, assertRegion, isScope, parseRegion, hasScope, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
+import { PrincipalParseError, StoreConflictError, assertRegion, isScope, parseRegion, hasScope, parsePrincipal, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
+import { requirePrincipal, type RequirePrincipalOptions } from "agentic-identity/http";
 import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudflare";
 import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
 import { ACCEPT_SCOPE } from "./suggestions.js";
-import { PRINCIPAL_KINDS, stamp, type Actor, type PrincipalKind } from "./principal.js";
+import { stamp, type Actor } from "./principal.js";
 import { CommentsService } from "./service.js";
 import { TEXT_ROOT } from "./local-host.js";
 import { exact, invalid } from "./validate.js";
@@ -17,7 +18,7 @@ export interface WorkerEnv {
   /** D1 database: each document, with its threads, as a Yjs update. */
   DB?: D1Like;
   /**
-   * JSON object: bearer token (32 bytes or more) to `kind:name`, or to `{ "as": "kind:name", "scopes": ["comments:write"] }`.
+   * JSON object: bearer token (32 to 512 bytes of A-Z a-z 0-9 _ -) to `kind:name` (the name uses A-Z a-z 0-9 . _ -), or to `{ "as": "kind:name", "scopes": ["comments:write"] }`.
    * Set it as a secret. A short token or a bad entry refuses the whole config.
    */
   AGENTIC_COMMENTS_TOKENS?: string;
@@ -36,6 +37,8 @@ const ADMIN: Scope = "comments:admin";
 const DEFAULT_SCOPES: Scope[] = [COMMENT];
 
 const MIN_TOKEN_BYTES = 32;
+// The shape identity's bearer check accepts. A token outside it could load but never sign in.
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{1,512}$/;
 const warned = new Set<string>();
 
 function refuse(reason: string): undefined {
@@ -57,9 +60,13 @@ function contextOf(entry: unknown): PrincipalContext | undefined {
   const who = typeof entry === "string" ? entry : object?.as;
   const cut = typeof who === "string" ? who.indexOf(":") : -1;
   if (typeof who !== "string" || cut < 1 || cut === who.length - 1) return undefined;
-  const kind = who.slice(0, cut) as PrincipalKind;
-  const name = who.slice(cut + 1);
-  if (!PRINCIPAL_KINDS.includes(kind)) return undefined;
+  let kind: PrincipalContext["kind"];
+  let name: string;
+  try {
+    ({ kind, id: name } = parsePrincipal({ kind: who.slice(0, cut), id: who.slice(cut + 1) }));
+  } catch {
+    return undefined;
+  }
   const given = object?.scopes;
   if (given !== undefined && !(Array.isArray(given) && given.every(isScope))) return undefined;
   try {
@@ -83,6 +90,7 @@ export function createTokenAuth(raw: string | undefined): Auth {
     for (const [token, entry] of Object.entries(parsed)) {
       const context = contextOf(entry);
       if (new TextEncoder().encode(token).length < MIN_TOKEN_BYTES) throw new Error(`a token is shorter than ${MIN_TOKEN_BYTES} bytes`);
+      if (!TOKEN_SHAPE.test(token)) throw new Error("a token holds a character outside A-Z a-z 0-9 _ - or is over 512 bytes");
       if (!context) throw new Error("an entry is not a valid kind:name or { as, scopes }");
       table.set(token, context);
     }
@@ -204,6 +212,8 @@ export type DocsSource = CommentsDocs | ((env: WorkerEnv) => Promise<CommentsDoc
 export interface AppOptions {
   /** The credential check. The default reads `AGENTIC_COMMENTS_TOKENS`. Pass any `Auth` from agentic-identity to replace it. */
   auth?: Auth | ((env: WorkerEnv) => Auth);
+  /** Origins that may send a write with a session cookie. A bearer token needs none. Passed to `requirePrincipal`. */
+  origins?: RequirePrincipalOptions["origins"];
 }
 
 type AppEnv = { Bindings: WorkerEnv; Variables: { context: PrincipalContext } };
@@ -234,8 +244,12 @@ export function createApp(source: DocsSource, options: AppOptions = {}): Hono<Ap
   app.get("/health", (c) => c.json({ ok: true, pack: "agentic-comments" }));
   app.use("/api/v1/*", async (c, next) => {
     const auth = typeof options.auth === "function" ? options.auth(c.env ?? {}) : (options.auth ?? createTokenAuth(c.env?.AGENTIC_COMMENTS_TOKENS));
-    const context = await auth.authenticate(c.req.raw);
-    if (!context) return fail("UNAUTHENTICATED", "send a valid bearer token", 401);
+    const context = await requirePrincipal(c.req.raw, auth, { origins: options.origins });
+    if (context instanceof Response) {
+      if (context.status === 401) return Response.json({ error: { code: "UNAUTHENTICATED", message: "send a valid bearer token" } }, { status: 401, headers: { "www-authenticate": "Bearer" } });
+      if (context.status === 403) return fail("FORBIDDEN", "this credential may not do this", 403);
+      return fail("INTERNAL", "the credential check is unavailable", context.status);
+    }
     c.set("context", context);
     await next();
   });

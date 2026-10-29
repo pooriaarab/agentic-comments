@@ -39,11 +39,19 @@ describe("auth", () => {
 
   test("one short token or bad entry refuses the whole table", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    for (const table of [{ short: "human:ada", [ADA]: "human:ada" }, { [ADA]: "ada" }, { [ADA]: "robot:ada" }, { [ADA]: { as: "human:ada", scopes: ["comments:accept"] } }, [], "nope"]) {
+    for (const table of [{ short: "human:ada", [ADA]: "human:ada" }, { [ADA]: "ada" }, { [ADA]: "robot:ada" }, { [ADA]: "human:ada@example.com" }, { [`${"a".repeat(31)}+`]: "human:ada" }, { [ADA]: { as: "human:ada", scopes: ["comments:accept"] } }, [], "nope"]) {
       const auth = createTokenAuth(typeof table === "string" ? table : JSON.stringify(table));
       expect(await auth.authenticate(new Request("https://x/", { headers: { authorization: `Bearer ${ADA}` } }))).toBeNull();
     }
     quiet.mockRestore();
+  });
+
+  test("a custom Auth that throws is refused with the API error shape", async () => {
+    const auth: Auth = { authenticate: async () => { throw new Error("store down"); } };
+    const app = createApp(new CommentsDocs(createMemoryStore({ region: "unknown" })), { auth });
+    const res = await app.request("/api/v1/me", { headers: { authorization: `Bearer ${ADA}` } });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect((await res.json()).error.code).toBe("INTERNAL");
   });
 
   test("a custom Auth port replaces the token table", async () => {

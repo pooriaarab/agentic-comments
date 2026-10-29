@@ -1,5 +1,6 @@
 import { CommentsError } from "./errors.js";
-import { PRINCIPAL_KINDS, stamp, type Actor, type PrincipalKind } from "./principal.js";
+import { PrincipalParseError, parsePrincipal } from "agentic-identity";
+import { PRINCIPAL_KINDS, stamp, type Actor } from "./principal.js";
 
 /**
  * Stamp the principal the operator set. `as` is `kind:name`, from a flag the operator wrote or from
@@ -13,5 +14,11 @@ export function operatorActor(as: string | undefined, scopes: string | undefined
     throw new CommentsError("INVALID_AUTHOR", `set the principal as kind:name, for example human:ada. Kinds: ${PRINCIPAL_KINDS.join(", ")}`);
   }
   const list = scopes === undefined || scopes.trim() === "" ? [] : scopes.split(",").map((s) => s.trim());
-  return stamp({ kind: value.slice(0, cut) as PrincipalKind, name: value.slice(cut + 1), scopes: list });
+  try {
+    const { kind, id } = parsePrincipal({ kind: value.slice(0, cut), id: value.slice(cut + 1) });
+    return stamp({ kind, name: id, scopes: list });
+  } catch (error) {
+    if (!(error instanceof PrincipalParseError)) throw error;
+    throw new CommentsError("INVALID_AUTHOR", `the principal needs a known kind (${PRINCIPAL_KINDS.join(", ")}) and a name of A-Z a-z 0-9 . _ -`);
+  }
 }
