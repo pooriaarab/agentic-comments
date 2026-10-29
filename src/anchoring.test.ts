@@ -141,4 +141,25 @@ describe("resolveAnchor", () => {
     expect(resolveAnchor({ quote: "\uDE00", prefix: "", suffix: "", from: 0, to: 1 }, "a😀b")).toEqual({ state: "orphaned" });
     expect(resolveAnchor({ quote: "\uD83D", prefix: "", suffix: "", from: 0, to: 1 }, "a😀b")).toEqual({ state: "orphaned" });
   });
+  it("prefers the copy whose context fits over a stale offset", () => {
+    expect(resolveAnchor(createAnchor("a foo", 2, 5), "b foo a foo")).toEqual({ state: "attached", from: 8, to: 11, method: "quote" });
+  });
+  it("keeps the old offsets on a tie when the text is unchanged", () => {
+    const t = "foo foo";
+    expect(resolveAnchor(createAnchor(t, 4, 7), t)).toMatchObject({ state: "attached", from: 4, method: "mapped" });
+  });
+  it("checks mapper input", () => {
+    expect(() => mapPosition(100, [{ from: 0, to: 0, insert: "a" }], 1, 10)).toThrow(RangeError);
+    expect(() => mapPosition(1, [], 1, NaN)).toThrow(RangeError);
+    expect(() => mapPosition(1, [], 0 as 1)).toThrow(RangeError);
+    expect(() => mapRange({ from: 0, to: 1 }, null as unknown as Edit[])).toThrow(RangeError);
+    expect(resolveAnchor(createAnchor("hello", 0, 2), "hello", {} as unknown as Edit[])).toEqual({ state: "orphaned" });
+  });
+  it("createAnchor refuses half a character in malformed text", () => {
+    expect(() => createAnchor("a\uD800", 1, 2)).toThrow(RangeError);
+  });
+  it("orphans a huge quote and a flood of matches", () => {
+    expect(resolveAnchor({ quote: "a".repeat(5000), prefix: "", suffix: "", from: 0, to: 5000 }, "a".repeat(9000))).toEqual({ state: "orphaned" });
+    expect(resolveAnchor(createAnchor("aa", 0, 1), "a".repeat(2000), undefined)).toMatchObject({ state: "orphaned" });
+  });
 });
