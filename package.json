@@ -1,6 +1,6 @@
 {
   "name": "agentic-comments",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
@@ -14,6 +14,10 @@
   ],
   "license": "MIT",
   "author": "Pooria Arab",
+  "homepage": "https://github.com/pooriaarab/agentic-comments#readme",
+  "bugs": {
+    "url": "https://github.com/pooriaarab/agentic-comments/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pooriaarab/agentic-comments.git"
@@ -24,7 +28,9 @@
     "node": ">=20"
   },
   "files": [
-    "dist"
+    "dist",
+    "llms.txt",
+    "SKILL.md"
   ],
   "publishConfig": {
     "access": "public"

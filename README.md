@@ -6,17 +6,18 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Threads, suggestions, and anchor survival work. It is not on npm yet. The CLI, the MCP
+> Status: first release, 0.1.0. Threads, suggestions, and anchor survival work. The CLI, the MCP
 > server, and notifications come next.
 
 ## Install
 
-The package is not published yet. Build it from source:
+Requires Node.js 20 or later. The quick start imports `yjs`, so install it with this package:
 
 ```sh
-git clone https://github.com/pooriaarab/agentic-comments
-cd agentic-comments && npm ci && npm run build
+npm install agentic-comments yjs
 ```
+
+To build from source, see Develop.
 
 ## Quick start
 
@@ -166,6 +167,8 @@ suggestions.accept(s.id, ada);
 ## Develop
 
 ```sh
+git clone https://github.com/pooriaarab/agentic-comments
+cd agentic-comments
 npm ci
 npm run ci:local
 ```
