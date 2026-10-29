@@ -12,7 +12,7 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
   in `AGENTIC_COMMENTS_TOKENS` by default, or any `Auth` you pass to `createApp`. A request with no valid
   token gets `401`. The host stamps the author, and a body with an `author` key fails with `400`. An agent
   needs the `comments:admin` scope to accept or reject, and never decides its own suggestion. The Worker
-  needs `AGENTIC_COMMENTS_REGION` and refuses to run without it.
+  needs `AGENTIC_COMMENTS_REGION`; without it every document route fails with `500 MISCONFIGURED`.
 - The error codes `NO_DOCUMENT`, `DOCUMENT_EXISTS`, `CONFLICT`, and `MISCONFIGURED`.
 - `hono` and `agentic-identity` are now dependencies of the package.
 
