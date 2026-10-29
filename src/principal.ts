@@ -66,7 +66,7 @@ export function readAuthor(value: unknown): Author | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { kind, name } = value as { kind?: unknown; name?: unknown };
   if (!PRINCIPAL_KINDS.includes(kind as PrincipalKind)) return undefined;
-  if (typeof name !== "string" || name.trim() === "" || name.length > MAX_NAME) return undefined;
+  if (typeof name !== "string" || name === "" || name !== name.trim() || name.length > MAX_NAME || /[\p{Cc}\p{Cf}]/u.test(name)) return undefined;
   return { kind: kind as PrincipalKind, name };
 }
 

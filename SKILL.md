@@ -1,11 +1,11 @@
 ---
 name: agentic-comments
-description: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
+description: Comment threads anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
 ---
 
 # agentic-comments
 
-Comment threads and suggestions anchored to any content, from people and agents.
+Comment threads anchored to any content, from people and agents.
 
 ## Use the SDK
 

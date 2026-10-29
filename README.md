@@ -4,7 +4,7 @@
 
 [Source](https://github.com/pooriaarab/agentic-comments) · [Support](https://github.com/pooriaarab/agentic-comments/issues)
 
-Comment threads and suggestions anchored to any content, from people and agents.
+Comment threads anchored to any content, from people and agents.
 
 > Status: early. Only the thread model works. It is not on npm yet. Suggestions,
 > anchor survival, the CLI, the MCP server, and notifications come next.
@@ -55,7 +55,11 @@ normal sync, and every replica sees the same threads.
 - No suggestions yet. No file store, CLI, MCP server, or HTTP API yet.
 - A thread does not check that its anchor still exists. That check comes next.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
-- A reply to a resolved thread is refused. Reopen the thread first.
+- A reply to a resolved thread is refused on the replica that sees the resolve. A reply and a
+  resolve made at once on two replicas both stay. The merged thread is resolved and holds the reply.
+- Author and kind are only as trustworthy as every peer that can write the document. A peer can write
+  any author straight into the Yjs data. The sync layer must decide who may write.
+- A thread holds up to 1,000 messages.
 - Every replica of a document must register the same custom anchor kinds.
 - Mentions are stored in lowercase, with no leading `@`.
 

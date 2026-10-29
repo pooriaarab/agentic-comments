@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { describe, expect, test } from "vitest";
-import { Actor, Comments, CommentsError, stamp, textAnchor, type Anchor } from "./index.js";
+import { Actor, authorLabel, Comments, CommentsError, PRINCIPAL_KINDS, stamp, textAnchor, type Anchor } from "./index.js";
 
 // Ways this model can fail, written before the code:
 //  1. A caller claims an author, forges an actor, or edits one after stamping.
@@ -457,5 +457,109 @@ describe("review findings", () => {
     expect(code(() => comments.list({ anchorType: 5 as never }))).toBe("INVALID_INPUT");
     const broken = new Comments(new Y.Doc(), { now: () => new Date(Number.NaN) });
     expect(code(() => broken.add({ anchor: cell, body: "x" }, ada))).toBe("INVALID_INPUT");
+  });
+});
+
+describe("second review findings", () => {
+  const ISO = "2026-01-01T00:00:00.000Z";
+  const itemAnchor = () => {
+    const text = new Y.Doc().getText("t");
+    text.insert(0, "hello");
+    return textAnchor(text, 0, 5);
+  };
+
+  test("a clock that gives a year past 9999 writes nothing", () => {
+    const doc = new Y.Doc();
+    const far = new Comments(doc, { now: () => new Date("+010000-01-01T00:00:00Z") });
+    expect(code(() => far.add({ anchor: cell, body: "x" }, ada))).toBe("INVALID_INPUT");
+    expect(make(doc).list()).toEqual([]);
+    expect(make(doc).problems()).toEqual([]);
+  });
+
+  test("a reply that meets a resolve on another replica stays, and the thread is resolved on both", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const { id } = make(a).add({ anchor: cell, body: "start" }, ada);
+    sync(a, b);
+    make(a).resolve(id, ada);
+    make(b).reply(id, { body: "late" }, bot);
+    sync(a, b);
+    for (const doc of [a, b]) {
+      const thread = make(doc).get(id);
+      expect(thread.status).toBe("resolved");
+      expect(thread.messages.map((m) => m.body)).toEqual(expect.arrayContaining(["start", "late"]));
+    }
+  });
+
+  test("stored mentions must be in the stored form", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push([
+      { id: "m1", at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: ["Bob"] },
+      { id: "m2", at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: ["@bob"] },
+    ]);
+    expect(comments.get(id).messages).toHaveLength(1);
+    expect(comments.problems()).toHaveLength(2);
+  });
+
+  test("threads sort by time, then by id, whatever the time format", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const threads = doc.getMap<Y.Map<unknown>>("comments.threads");
+    const raw = (id: string, at: string) => {
+      const fields = new Y.Map<unknown>();
+      threads.set(id, fields);
+      fields.set("anchor", cell);
+      fields.set("state", { status: "open", by: { kind: "human", name: "eve" }, at });
+      const list = new Y.Array<unknown>();
+      fields.set("messages", list);
+      list.push([{ id: `m-${id}`, at, author: { kind: "human", name: "eve" }, body: "x", mentions: [] }]);
+    };
+    raw("late", "2026-01-01T00:00:00.500Z");
+    raw("early", "2026-01-01T00:00:00Z");
+    raw("tie-b", "2026-01-01T00:00:01.000Z");
+    raw("tie-a", "2026-01-01T00:00:01Z");
+    expect(comments.list().map((t) => t.id)).toEqual(["early", "late", "tie-a", "tie-b"]);
+  });
+
+  test("a text range uses item positions only, with a plain assoc", () => {
+    const good = itemAnchor();
+    const comments = make();
+    for (const anchor of [
+      { ...good, start: { ...good.start, tname: "a" } },
+      { ...good, end: { ...good.end, type: { client: 9, clock: 9 } } },
+      { ...good, end: { ...good.end, assoc: 99 } },
+      { ...good, start: { ...good.start, assoc: -5 } },
+    ]) {
+      expect(code(() => comments.add({ anchor: anchor as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    }
+  });
+
+  test("author names with edge spaces, control characters, or invisible characters are refused", () => {
+    for (const name of [" ada", "ada ", "ada\n", "a\u200Bda", "ad\u0000a", "ada\u202E"]) {
+      expect(code(() => stamp({ kind: "human", name }))).toBe("INVALID_AUTHOR");
+    }
+  });
+
+  test("no agent kind is labeled a person", () => {
+    const labels = Object.fromEntries(PRINCIPAL_KINDS.map((kind) => [kind, authorLabel({ kind, name: "n" })]));
+    expect(labels).toEqual({ human: "person", user_token: "person via agent", agent_of_human: "agent", agent_of_agent: "agent", agent: "agent" });
+  });
+
+  test("a handle keeps its non-ASCII letters", () => {
+    const thread = make().add({ anchor: cell, body: "ping @José and @Zoë." }, ada);
+    expect(thread.messages[0].mentions).toEqual(["josé", "zoë"]);
+  });
+
+  test("a thread over the message cap is refused on write and malformed on read", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    const list = doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
+    list.push(Array.from({ length: 999 }, (_, i) => ({ id: `m${i}`, at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] })));
+    expect(code(() => comments.reply(id, { body: "one too many" }, bot))).toBe("INVALID_INPUT");
+    list.push([{ id: "extra", at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] }]);
+    expect(code(() => comments.get(id))).toBe("CORRUPT");
   });
 });

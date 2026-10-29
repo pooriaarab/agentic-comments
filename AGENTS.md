@@ -1,6 +1,6 @@
 # agentic-comments agent guide
 
-Comment threads and suggestions anchored to any content, from people and agents.
+Comment threads anchored to any content, from people and agents.
 
 ## Mental model
 

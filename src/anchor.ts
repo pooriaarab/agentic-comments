@@ -73,7 +73,7 @@ function position(raw: unknown, field: string): RelativePositionJson {
   if (p.item !== undefined) out.item = id(p.item, `${field}.item`);
   if (p.tname !== undefined) out.tname = key(p.tname, `${field}.tname`);
   if (p.assoc !== undefined) {
-    if (!Number.isSafeInteger(p.assoc)) bad(`${field}.assoc must be a whole number`);
+    if (p.assoc !== 0 && p.assoc !== -1) bad(`${field}.assoc must be 0 or -1`);
     out.assoc = p.assoc as number;
   }
   if (out.type === undefined && out.item === undefined && out.tname === undefined) bad(`${field} must name an item or a type`);
@@ -84,7 +84,9 @@ const parseText = (raw: Record<string, unknown>): TextAnchor => {
   if (typeof raw.text !== "string" || raw.text === "" || raw.text.length > MAX_QUOTE) bad(`text must be 1 to ${MAX_QUOTE} characters`);
   const start = position(raw.start, "start");
   const end = position(raw.end, "end");
+  const owner = (p: RelativePositionJson) => JSON.stringify([p.type ?? null, p.tname ?? null]);
   if (start.item === undefined || end.item === undefined) bad("a text range needs an item position at each end");
+  if ((start.type && start.tname) || (end.type && end.tname) || owner(start) !== owner(end)) bad("both ends of a text range must name the same Yjs type");
   return { type: "text", text: raw.text as string, start, end };
 };
 

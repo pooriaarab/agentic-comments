@@ -52,9 +52,10 @@ export interface ThreadFilter {
 const THREADS = "comments.threads";
 const MAX_BODY = 10_000;
 const MAX_MENTIONS = 50;
+const MAX_MESSAGES = 1_000;
 const MAX_HANDLE = 128;
 const STATUSES = ["open", "resolved"];
-const MENTION = /(?<![\w@.])@([A-Za-z0-9][A-Za-z0-9_.-]{0,63})/g;
+const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}_.-]{0,63})/gu;
 
 type Fields = Y.Map<unknown>;
 
@@ -77,7 +78,7 @@ function body(value: unknown): string {
 /** Handles match without case and without leading `@`. They are stored in this form. */
 const handle = (value: string): string => value.replace(/^@+/, "").toLowerCase();
 
-const validHandle = (value: unknown): value is string => typeof value === "string" && value.length <= MAX_HANDLE && /^\S+$/.test(value);
+const validHandle = (value: unknown): value is string => typeof value === "string" && value !== "" && value.length <= MAX_HANDLE && /^\S+$/.test(value) && handle(value) === value;
 
 function mentionsOf(text: string, explicit: unknown): string[] {
   const found = [...text.matchAll(MENTION)].map((m) => handle(m[1].replace(/[._-]+$/, "")));
@@ -123,8 +124,9 @@ export class Comments {
 
   private time(): string {
     const at = this.now();
-    if (!(at instanceof Date) || Number.isNaN(at.getTime())) invalid("the clock must return a valid date");
-    return at.toISOString();
+    const text = at instanceof Date && !Number.isNaN(at.getTime()) ? at.toISOString() : "";
+    if (!ISO_TIME.test(text)) invalid("the clock must return a date between the years 0000 and 9999");
+    return text;
   }
 
   private parseAnchor(raw: unknown): Anchor {
@@ -171,6 +173,7 @@ export class Comments {
       if (!STATUSES.includes(state.status as string) || !by || !validDate(state.at)) throw new Error("the thread status is not valid");
       const list = fields.get("messages");
       if (!(list instanceof Y.Array)) throw new Error("the thread has no message list");
+      if (list.length > MAX_MESSAGES) throw new Error(`the thread has more than ${MAX_MESSAGES} messages`);
       const messages: Message[] = [];
       const issues: string[] = [];
       const seen = new Set<string>();
@@ -215,6 +218,10 @@ export class Comments {
     return this.get(id);
   }
 
+  /**
+   * Add a message. The resolved check runs on this replica only. A reply and a resolve made at once
+   * on two replicas both stay, and the merged thread is resolved with the reply in it.
+   */
   reply(threadId: string, input: NewReply, actor: Actor): Message {
     const who = assertActor(actor);
     const given = exact(input, ["body", "mentions"], "a reply");
@@ -223,8 +230,10 @@ export class Comments {
     if (this.read(id, fields).thread.status === "resolved") {
       throw new CommentsError("THREAD_RESOLVED", `thread "${id}" is resolved; reopen it to reply`);
     }
+    const list = fields.get("messages") as Y.Array<Message>;
+    if (list.length >= MAX_MESSAGES) invalid(`thread "${id}" holds ${MAX_MESSAGES} messages and takes no more`);
     const message = this.message(text, given.mentions, who);
-    (fields.get("messages") as Y.Array<Message>).push([copy(message)]);
+    list.push([copy(message)]);
     return message;
   }
 
@@ -261,7 +270,7 @@ export class Comments {
       .threads.filter((t) => given.status === undefined || t.status === given.status)
       .filter((t) => given.anchorType === undefined || t.anchor.type === given.anchorType)
       .filter((t) => wanted === undefined || t.messages.some((m) => m.mentions.includes(wanted)))
-      .sort((a, b) => a.messages[0].at.localeCompare(b.messages[0].at) || a.id.localeCompare(b.id));
+      .sort((a, b) => Date.parse(a.messages[0].at) - Date.parse(b.messages[0].at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /** Threads or messages that could not be read, for example from a replica that wrote bad data. */

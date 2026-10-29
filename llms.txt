@@ -1,6 +1,6 @@
 # agentic-comments
 
-Comment threads and suggestions anchored to any content, from people and agents.
+Comment threads anchored to any content, from people and agents.
 
 Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
 
