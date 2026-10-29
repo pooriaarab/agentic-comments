@@ -1,6 +1,6 @@
 {
   "name": "agentic-comments",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
@@ -89,7 +89,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "agentic-design": "^0.5.0",
+    "agentic-design": "^0.8.0",
     "agentic-identity": "^0.9.0",
     "hono": "^4.13.14",
     "zod": "^4.6.7"
