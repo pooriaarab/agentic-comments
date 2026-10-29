@@ -30,7 +30,7 @@ accepts or rejects its own suggestion.
 
 ## The CLI and MCP tools
 
-`agentic-comments mcp` starts the MCP server (run it from a build until the package is published). The operator sets the principal and scopes when it starts.
+`agentic-comments mcp` starts the MCP server (run it from a build until the release after 0.1.0). The operator sets the principal and scopes when it starts.
 You do not pass them. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`,
 `resolve_thread`, `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`,
 `accept_suggestion`, `reject_suggestion`. A text change is `{"replace": "..."}`. A cell, slide, or canvas

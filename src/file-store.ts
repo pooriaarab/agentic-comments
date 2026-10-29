@@ -201,7 +201,7 @@ export class FileStore {
 
   /**
    * Clear a lock whose holder is dead (or is this process, with another mark), an empty one older than a
- * short time, or any one older than a minute. The lock moves to a unique name
+ * short time, or any one more than a minute old or a minute in the future. The lock moves to a unique name
    * first, so only one process clears it. If the moved lock is not the one we looked at, it goes back.
    */
   private clearStale(lock: string, mine: string): boolean {
@@ -217,7 +217,8 @@ export class FileStore {
     const well = /^\d{1,10}(:[\w-]{1,64})?$/.test(held) && pid > 0;
     // A write in this process is synchronous, so a lock with our id and another mark cannot be live.
     const left = well && (!alive(pid) || (pid === process.pid && held !== mine));
-    if (!left && !(held === "" && age > EMPTY_LOCK_MS) && age <= LOCK_MAX_AGE_MS) return false;
+    const old = age > LOCK_MAX_AGE_MS || age < -LOCK_MAX_AGE_MS;
+    if (!left && !(held === "" && age > EMPTY_LOCK_MS) && !old) return false;
     const tomb = `${lock}.stale-${process.pid}-${globalThis.crypto.randomUUID()}`;
     try {
       renameSync(lock, tomb);

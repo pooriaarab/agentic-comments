@@ -1,6 +1,6 @@
 {
   "name": "agentic-comments",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
@@ -15,6 +15,10 @@
   ],
   "license": "MIT",
   "author": "Pooria Arab",
+  "homepage": "https://github.com/pooriaarab/agentic-comments#readme",
+  "bugs": {
+    "url": "https://github.com/pooriaarab/agentic-comments/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pooriaarab/agentic-comments.git"
@@ -25,11 +29,14 @@
     "node": ">=20"
   },
   "files": [
-    "dist"
+    "dist",
+    "llms.txt",
+    "SKILL.md"
   ],
   "publishConfig": {
     "access": "public"
   },
+  "mcpName": "io.github.pooriaarab/agentic-comments",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -42,27 +49,30 @@
       "import": "./dist/local.js"
     }
   },
+  "bin": {
+    "agentic-comments": "./dist/cli.js",
+    "agentic-comments-mcp": "./dist/mcp-bin.js"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist",
+    "prepack": "npm run build",
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "yjs": "^13.6.0",
     "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.0.0"
-  },
-  "mcpName": "io.github.pooriaarab/agentic-comments",
-  "bin": {
-    "agentic-comments": "./dist/cli.js",
-    "agentic-comments-mcp": "./dist/mcp-bin.js"
+    "vitest": "^3.0.0",
+    "yjs": "^13.6.0"
   }
 }

@@ -333,6 +333,24 @@ describe("locks and paths", () => {
     expect(cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada").code).toBe(0);
   });
 
+  test("a lock with a time far in the future is cleared too", () => {
+    const file = fresh();
+    writeFileSync(`${file}.lock`, "");
+    const future = new Date(Date.now() + 7_200_000);
+    utimesSync(`${file}.lock`, future, future);
+    expect(cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada").code).toBe(0);
+  });
+
+  test("a stray key on an anchor is refused by the service, whatever the anchor type", async () => {
+    const file = fresh();
+    const { CommentsService, operatorActor } = await import("./local.js");
+    const service = new CommentsService(new FileStore(file), operatorActor("human:ada", undefined));
+    for (const anchor of [{ type: "cell", key: "A1", quote: "x" }, { type: "cell", key: "A1", elementId: "zz" }, { type: "text", quote: "hello", key: "k" }, { type: "slide", elementId: "e", key: "k" }]) {
+      expect(() => service.comment({ anchor: anchor as never, body: "x" })).toThrow(/does not accept/);
+    }
+    expect(service.threads()).toEqual([]);
+  });
+
   test("a live lock that is new still blocks", () => {
     const file = fresh();
     writeFileSync(`${file}.lock`, `${process.pid}:${"a".repeat(8)}`);

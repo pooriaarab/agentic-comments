@@ -24,10 +24,16 @@ export interface ListFilter {
 const SHOWN = 5;
 
 function anchorFrom(ydoc: Y.Doc, spec: unknown): Anchor {
-  const given = exact(spec, ["type", "quote", "occurrence", "key", "elementId"], "an anchor");
-  if (given.type === "cell" || given.type === "slide" || given.type === "canvas") {
-    return { type: given.type, ...(given.type === "cell" ? { key: given.key } : { elementId: given.elementId }) } as Anchor;
+  const type = (spec as { type?: unknown } | null)?.type;
+  if (type === "cell") {
+    const given = exact(spec, ["type", "key"], "a cell anchor");
+    return { type: "cell", key: given.key } as Anchor;
   }
+  if (type === "slide" || type === "canvas") {
+    const given = exact(spec, ["type", "elementId"], `a ${type} anchor`);
+    return { type, elementId: given.elementId } as Anchor;
+  }
+  const given = exact(spec, ["type", "quote", "occurrence"], "a text anchor");
   if (given.type !== "text") return invalid('an anchor type is "text", "cell", "slide", or "canvas"');
   const quote = given.quote;
   if (typeof quote !== "string" || quote === "") return invalid("a text anchor needs a quote");

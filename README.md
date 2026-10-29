@@ -6,17 +6,20 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Threads, suggestions, anchor survival, a CLI, and an MCP server work. It is not on npm
-> yet. Notifications come next.
+> Status: see [npm](https://www.npmjs.com/package/agentic-comments) for the latest version. Threads,
+> suggestions, anchor survival, a CLI, and an MCP server work in the source. Version 0.1.0 has the library
+> only. The CLI and the MCP server arrive in the next release. Notifications come after that.
 
 ## Install
 
-The package is not published yet. Build it from source:
+Requires Node.js 20 or later. `yjs` is a peer dependency. Your app and this package must use the same
+copy of `yjs`, because the package checks the Yjs types of your document. Install both:
 
 ```sh
-git clone https://github.com/pooriaarab/agentic-comments
-cd agentic-comments && npm ci && npm run build
+npm install agentic-comments yjs
 ```
+
+To build from source, see Develop.
 
 ## Quick start
 
@@ -132,11 +135,12 @@ non-text values are in the `values` map. A file starts with a magic mark and a h
 takes a lock file, saves with a rename, and runs again if the file changed meanwhile, so parallel processes
 on one machine lose nothing. A full disk or a file size limit fails the write and leaves the old file. A lock left by a dead process, or by this process under another mark, is cleared. So is an empty lock older
 than two seconds and any lock older than a minute. The store is for one
-machine. It cannot check a lock held in another container or on another machine. A save that
+machine. It cannot check a lock held in another container or on another machine. Two containers that
+share a volume can have the same process id, and each then clears the other's lock, so they can lose writes. A save that
 would pass 50 MB is refused.
 
-The package is not published yet. After `npm run build`, run `node dist/cli.js` where these examples say
-`npx agentic-comments`.
+Version 0.1.0 has no CLI or MCP server. They arrive in the next release. Until then, run `npm run build` and
+use `node dist/cli.js` where these examples say `npx agentic-comments`.
 
 ```sh
 export AGENTIC_COMMENTS_FILE=./comments.ydoc
@@ -213,6 +217,8 @@ npx agentic-comments accept <id>
 ## Develop
 
 ```sh
+git clone https://github.com/pooriaarab/agentic-comments
+cd agentic-comments
 npm ci
 npm run ci:local
 ```
