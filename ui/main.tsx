@@ -19,7 +19,7 @@ const live = (() => {
 
 function Demo() {
   const [who, setWho] = useState("maya");
-  // After the first read the address holds only #doc=<id>. A change there shows another document.
+  // The first read removes the whole hash. Set `#doc=<id>` afterwards to show another document.
   const [doc, setDoc] = useState(live?.doc ?? "demo");
   useEffect(() => {
     const onHash = () => setDoc(new URLSearchParams(location.hash.slice(1)).get("doc") ?? "demo");

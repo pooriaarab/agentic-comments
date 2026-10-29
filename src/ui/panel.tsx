@@ -280,11 +280,16 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
   // The run that is current. It changes when the document or the client does, and when the panel goes away. A read or
   // write that began in an older run must not set state, announce, or move focus: its data belongs to another document.
   const run = useRef(0);
+  const writing = useRef(false);
 
   const load = useCallback(
     async (gen: number) => {
       const [m, t, s] = await Promise.all([client.me(), client.listThreads(docId), client.listSuggestions(docId)]);
       if (gen !== run.current) return;
+      // A `me` with no scopes list cannot say what it may do. Treat it as bad data and show an error, never a guess.
+      if (!(typeof m === "object" && m !== null && typeof m.kind === "string" && typeof m.name === "string" && Array.isArray(m.scopes) && m.scopes.every((x) => typeof x === "string"))) {
+        throw new Error("the client returned a principal with no kind, name, or scopes");
+      }
       setMe(m);
       setThreads(only<Thread>(t));
       setSuggestions(only<Suggestion>(s));
@@ -294,12 +299,16 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
 
   useEffect(() => {
     const gen = ++run.current;
+    writing.current = false;
     setMe(undefined);
     setThreads(undefined);
     setSuggestions([]);
     setBusy(undefined);
     setError(undefined);
     setNotice("");
+    setQuote("");
+    setBody("");
+    setView("open");
     load(gen).catch((e) => gen === run.current && setError(failure(e)));
     return () => {
       run.current += 1;
@@ -308,6 +317,8 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
 
   // Run one write, then read again. A failure shows as it is, and the panel never retries with other input.
   const act: Act = async (key, call, done, focus) => {
+    if (writing.current) return; // one write at a time, so reads land in order and one spinner stays right
+    writing.current = true;
     const gen = run.current;
     const current = () => gen === run.current;
     // The pressed button may be gone after a read, and focus would drop to the page. Put it on the heading of its list.
@@ -327,7 +338,10 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
       await load(gen).catch(() => undefined); // show what the server holds now. The error stays.
       if (current()) refocus();
     } finally {
-      if (current()) setBusy(undefined);
+      if (current()) {
+        writing.current = false;
+        setBusy(undefined);
+      }
     }
   };
 
@@ -336,11 +350,19 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
     const q = quote.trim();
     const b = body.trim();
     if (!q || !b) return;
-    void act("new", async () => {
-      await client.addThread(docId, { anchor: { type: "text", quote: q }, body: b });
-      setQuote("");
-      setBody("");
-    }, "Thread added.");
+    const gen = run.current;
+    void act(
+      "new",
+      async () => {
+        await client.addThread(docId, { anchor: { type: "text", quote: q }, body: b });
+        // The form is shared by every document. A late answer must not clear what a person typed for the next one.
+        if (gen === run.current) {
+          setQuote("");
+          setBody("");
+        }
+      },
+      "Thread added.",
+    );
   };
 
   const shown = (threads ?? []).filter((t) => view === "all" || t.status === view);
