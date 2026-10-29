@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, describe, expect, test } from "vitest";
 import { FileStore, MAX_FILE, TEXT_ROOT } from "./local.js";
+import { VERSION } from "./version.js";
 
 // Ways the CLI and the MCP server can fail, written before the tests. Each runs the real built program.
 //  0. A lock timeout that is not a number makes a write wait for ever, or a lock it cannot read spins.
@@ -194,6 +195,17 @@ describe("the command line", () => {
 
 
 describe("the store under stress", () => {
+  test("agentic-comments-mcp --help and --version print and exit 0 with no principal set", () => {
+    const bare = { PATH: process.env.PATH };
+    for (const flag of ["--help", "-h"]) {
+      const run = spawnSync("node", [dist("mcp-bin.js"), flag], { env: bare, encoding: "utf8", timeout: 5_000 });
+      expect([run.status, run.stderr]).toEqual([0, ""]);
+      expect(run.stdout).toContain("AGENTIC_COMMENTS_AS");
+    }
+    const version = spawnSync("node", [dist("mcp-bin.js"), "--version"], { env: bare, encoding: "utf8", timeout: 5_000 });
+    expect([version.status, version.stdout.trim()]).toEqual([0, VERSION]);
+  });
+
   test("a lock timeout that is not a whole number is refused, and never waits for ever", () => {
     const file = fresh();
     writeFileSync(`${file}.lock`, String(process.pid));
