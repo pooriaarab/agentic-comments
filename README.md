@@ -1,9 +1,8 @@
 # agentic-comments
 
-[![npm version](https://img.shields.io/npm/v/agentic-comments)](https://www.npmjs.com/package/agentic-comments)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/license/mit)
 
-[Package](https://www.npmjs.com/package/agentic-comments) · [Source](https://github.com/pooriaarab/agentic-comments) · [Support](https://github.com/pooriaarab/agentic-comments/issues)
+[Source](https://github.com/pooriaarab/agentic-comments) · [Support](https://github.com/pooriaarab/agentic-comments/issues)
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
@@ -12,8 +11,11 @@ Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Install
 
+The package is not published yet. Build it from source:
+
 ```sh
-npm install agentic-comments yjs
+git clone https://github.com/pooriaarab/agentic-comments
+cd agentic-comments && npm ci && npm run build
 ```
 
 ## Quick start
@@ -54,6 +56,8 @@ normal sync, and every replica sees the same threads.
 - A thread does not check that its anchor still exists. That check comes next.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
 - A reply to a resolved thread is refused. Reopen the thread first.
+- Every replica of a document must register the same custom anchor kinds.
+- Mentions are stored in lowercase, with no leading `@`.
 
 ## Develop
 

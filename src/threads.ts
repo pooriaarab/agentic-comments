@@ -16,7 +16,10 @@ export interface Thread {
   id: string;
   anchor: Anchor;
   status: "open" | "resolved";
-  /** Who last changed the status, and when. For a new thread, the person who opened it. */
+  /**
+   * The status change that won, and when. For a new thread, who opened it. Replicas that change the
+   * status at once agree on one change. Yjs picks it by client id, not by time.
+   */
   statusBy: Author;
   statusAt: string;
   messages: Message[];
@@ -71,34 +74,44 @@ function body(value: unknown): string {
   return value as string;
 }
 
-const handle = (value: string): string => (value.startsWith("@") ? value.slice(1) : value);
+/** Handles match without case and without leading `@`. They are stored in this form. */
+const handle = (value: string): string => value.replace(/^@+/, "").toLowerCase();
+
+const validHandle = (value: unknown): value is string => typeof value === "string" && value.length <= MAX_HANDLE && /^\S+$/.test(value);
 
 function mentionsOf(text: string, explicit: unknown): string[] {
-  const found = [...text.matchAll(MENTION)].map((m) => m[1].replace(/[._-]+$/, ""));
+  const found = [...text.matchAll(MENTION)].map((m) => handle(m[1].replace(/[._-]+$/, "")));
   let listed: string[] = [];
   if (explicit !== undefined) {
-    const ok = Array.isArray(explicit) && explicit.length <= MAX_MENTIONS && explicit.every((m) => typeof m === "string" && /^\S{1,128}$/.test(handle(m)) && handle(m).length <= MAX_HANDLE);
+    const ok = Array.isArray(explicit) && explicit.length <= MAX_MENTIONS && explicit.every((m) => typeof m === "string" && handle(m) !== "" && handle(m).length <= MAX_HANDLE && /^\S+$/.test(handle(m)));
     if (!ok) invalid(`mentions must be a list of up to ${MAX_MENTIONS} handles with no spaces`);
     listed = (explicit as string[]).map(handle);
   }
-  return [...new Set([...found, ...listed])];
+  const all = [...new Set([...found, ...listed])];
+  if (all.length > MAX_MENTIONS) invalid(`a message can mention up to ${MAX_MENTIONS} handles`);
+  return all;
 }
 
-const validDate = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value));
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+const validDate = (value: unknown): value is string => typeof value === "string" && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value));
+
+/** A copy that shares nothing with the original, so a caller cannot change what Yjs holds. */
+const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /** Comment threads on a Yjs document. Replies and status merge across replicas. */
 export class Comments {
   private readonly kinds = new Map<string, AnchorKind>();
   private readonly now: () => Date;
 
+  /** Every replica of a document must register the same custom anchor kinds. Others read those threads as malformed. */
   constructor(
     private readonly ydoc: Y.Doc,
     options: CommentsOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
     for (const kind of [...BUILT_IN_KINDS, ...(options.anchors ?? [])]) {
-      if (typeof kind.type !== "string" || kind.type === "" || this.kinds.has(kind.type)) {
-        throw new CommentsError("INVALID_ANCHOR", `the anchor type "${kind.type}" is empty or already defined`);
+      if (typeof kind?.type !== "string" || kind.type === "" || typeof kind.parse !== "function" || this.kinds.has(kind.type)) {
+        throw new CommentsError("INVALID_ANCHOR", `the anchor type "${String(kind?.type)}" is empty, has no parse, or is already defined`);
       }
       this.kinds.set(kind.type, kind);
     }
@@ -108,12 +121,20 @@ export class Comments {
     return this.ydoc.getMap<Fields>(THREADS);
   }
 
+  private time(): string {
+    const at = this.now();
+    if (!(at instanceof Date) || Number.isNaN(at.getTime())) invalid("the clock must return a valid date");
+    return at.toISOString();
+  }
+
   private parseAnchor(raw: unknown): Anchor {
     const type = (raw as { type?: unknown } | null)?.type;
     const kind = typeof raw === "object" && raw !== null && !Array.isArray(raw) && typeof type === "string" ? this.kinds.get(type) : undefined;
     if (!kind) throw new CommentsError("INVALID_ANCHOR", `an anchor needs a type: ${[...this.kinds.keys()].join(", ")}`);
     try {
-      return kind.parse(raw as Record<string, unknown>) as Anchor;
+      const parsed = copy(kind.parse(copy(raw) as Record<string, unknown>));
+      if (parsed?.type !== kind.type) throw new Error(`the "${kind.type}" kind must return an anchor of its own type`);
+      return parsed as Anchor;
     } catch (error) {
       if (error instanceof CommentsError) throw error;
       throw new CommentsError("INVALID_ANCHOR", error instanceof Error ? error.message : String(error));
@@ -123,7 +144,7 @@ export class Comments {
   private message(text: string, explicit: unknown, actor: Actor): Message {
     return {
       id: globalThis.crypto.randomUUID(),
-      at: this.now().toISOString(),
+      at: this.time(),
       author: { kind: actor.kind, name: actor.name },
       body: text,
       mentions: mentionsOf(text, explicit),
@@ -133,29 +154,38 @@ export class Comments {
   private readMessage(raw: unknown): Message {
     const m = (raw ?? {}) as Record<string, unknown>;
     const author = readAuthor(m.author);
-    if (typeof m.id !== "string" || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY) {
-      throw new Error("a message has no id, time, valid author, or body");
+    if (typeof m.id !== "string" || m.id === "" || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY) {
+      throw new Error("a message has no id, ISO time, valid author, or body");
     }
-    if (!Array.isArray(m.mentions) || m.mentions.some((x) => typeof x !== "string")) throw new Error("a message has bad mentions");
+    if (!Array.isArray(m.mentions) || m.mentions.length > MAX_MENTIONS || !m.mentions.every(validHandle)) throw new Error("a message has bad mentions");
     return { id: m.id, at: m.at, author, body: m.body, mentions: [...(m.mentions as string[])] };
   }
 
-  private read(id: string, fields: unknown): Thread {
+  /** A thread with a bad anchor or status is malformed. A bad message is skipped and named in `issues`. */
+  private read(id: string, fields: unknown): { thread: Thread; issues: string[] } {
     try {
+      if (id === "") throw new Error("the thread id is empty");
       if (!(fields instanceof Y.Map)) throw new Error("the thread is not a map");
       const state = (fields.get("state") ?? {}) as Record<string, unknown>;
       const by = readAuthor(state.by);
       if (!STATUSES.includes(state.status as string) || !by || !validDate(state.at)) throw new Error("the thread status is not valid");
       const list = fields.get("messages");
-      if (!(list instanceof Y.Array) || list.length === 0) throw new Error("the thread has no messages");
-      return {
-        id,
-        anchor: this.parseAnchor(fields.get("anchor")),
-        status: state.status as Thread["status"],
-        statusBy: by,
-        statusAt: state.at,
-        messages: list.toArray().map((m) => this.readMessage(m)),
-      };
+      if (!(list instanceof Y.Array)) throw new Error("the thread has no message list");
+      const messages: Message[] = [];
+      const issues: string[] = [];
+      const seen = new Set<string>();
+      list.toArray().forEach((raw, index) => {
+        try {
+          const message = this.readMessage(raw);
+          if (seen.has(message.id)) throw new Error("a message id repeats");
+          seen.add(message.id);
+          messages.push(message);
+        } catch (error) {
+          issues.push(`message ${index} skipped: ${(error as Error).message}`);
+        }
+      });
+      if (messages.length === 0) throw new Error("the thread has no valid message");
+      return { thread: { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages }, issues };
     } catch (error) {
       throw new CommentsError("CORRUPT", `thread "${id}" is malformed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -177,10 +207,10 @@ export class Comments {
       const fields: Fields = new Y.Map();
       this.map.set(id, fields);
       fields.set("anchor", anchor);
-      fields.set("state", { status: "open", by: first.author, at: first.at });
+      fields.set("state", { status: "open", by: copy(first.author), at: first.at });
       const messages = new Y.Array<Message>();
       fields.set("messages", messages);
-      messages.push([first]);
+      messages.push([copy(first)]);
     });
     return this.get(id);
   }
@@ -190,20 +220,20 @@ export class Comments {
     const given = exact(input, ["body", "mentions"], "a reply");
     const { id, fields } = this.fields(threadId);
     const text = body(given.body);
-    if (this.read(id, fields).status === "resolved") {
+    if (this.read(id, fields).thread.status === "resolved") {
       throw new CommentsError("THREAD_RESOLVED", `thread "${id}" is resolved; reopen it to reply`);
     }
     const message = this.message(text, given.mentions, who);
-    (fields.get("messages") as Y.Array<Message>).push([message]);
+    (fields.get("messages") as Y.Array<Message>).push([copy(message)]);
     return message;
   }
 
   private setStatus(threadId: string, status: Thread["status"], actor: Actor): Thread {
     const who = assertActor(actor);
     const { id, fields } = this.fields(threadId);
-    const current = this.read(id, fields);
-    if (current.status === status) return current;
-    fields.set("state", { status, by: { kind: who.kind, name: who.name }, at: this.now().toISOString() });
+    const { thread } = this.read(id, fields);
+    if (thread.status === status) return thread;
+    fields.set("state", { status, by: { kind: who.kind, name: who.name }, at: this.time() });
     return this.get(id);
   }
 
@@ -217,21 +247,24 @@ export class Comments {
 
   get(threadId: string): Thread {
     const { id, fields } = this.fields(threadId);
-    return this.read(id, fields);
+    return this.read(id, fields).thread;
   }
 
   /** Threads in the order they were started. A malformed thread is skipped; `problems()` names it. */
   list(filter: ThreadFilter = {}): Thread[] {
-    if (filter.status !== undefined && !STATUSES.includes(filter.status)) invalid(`status must be ${STATUSES.join(" or ")}`);
-    const wanted = filter.mentioning === undefined ? undefined : handle(filter.mentioning);
+    const given = exact(filter, ["status", "anchorType", "mentioning"], "a filter");
+    if (given.status !== undefined && !STATUSES.includes(given.status as string)) invalid(`status must be ${STATUSES.join(" or ")}`);
+    if (given.anchorType !== undefined && typeof given.anchorType !== "string") invalid("anchorType must be text");
+    if (given.mentioning !== undefined && typeof given.mentioning !== "string") invalid("mentioning must be text");
+    const wanted = given.mentioning === undefined ? undefined : handle(given.mentioning as string);
     return this.readAll()
-      .threads.filter((t) => filter.status === undefined || t.status === filter.status)
-      .filter((t) => filter.anchorType === undefined || t.anchor.type === filter.anchorType)
+      .threads.filter((t) => given.status === undefined || t.status === given.status)
+      .filter((t) => given.anchorType === undefined || t.anchor.type === given.anchorType)
       .filter((t) => wanted === undefined || t.messages.some((m) => m.mentions.includes(wanted)))
       .sort((a, b) => a.messages[0].at.localeCompare(b.messages[0].at) || a.id.localeCompare(b.id));
   }
 
-  /** Threads that could not be read, for example from a replica that wrote bad data. */
+  /** Threads or messages that could not be read, for example from a replica that wrote bad data. */
   problems(): { id: string; reason: string }[] {
     return this.readAll().problems;
   }
@@ -241,7 +274,9 @@ export class Comments {
     const problems: { id: string; reason: string }[] = [];
     for (const [id, fields] of this.map.entries()) {
       try {
-        threads.push(this.read(id, fields));
+        const { thread, issues } = this.read(id, fields);
+        threads.push(thread);
+        for (const reason of issues) problems.push({ id, reason });
       } catch (error) {
         problems.push({ id, reason: (error as Error).message });
       }

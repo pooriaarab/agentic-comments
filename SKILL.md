@@ -1,6 +1,6 @@
 ---
 name: agentic-comments
-description: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs,mcp.
+description: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
 ---
 
 # agentic-comments

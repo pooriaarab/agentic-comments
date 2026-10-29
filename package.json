@@ -6,12 +6,10 @@
     "comments",
     "threads",
     "mentions",
-    "suggestions",
     "annotations",
     "collaboration",
     "agents",
-    "yjs",
-    "mcp"
+    "yjs"
   ],
   "license": "MIT",
   "author": "Pooria Arab",
@@ -22,7 +20,7 @@
   "type": "module",
   "private": false,
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "files": [
     "dist"
@@ -30,7 +28,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "mcpName": "io.github.pooriaarab/agentic-comments",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

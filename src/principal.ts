@@ -18,16 +18,17 @@ export interface StampInput {
 
 const MAX_NAME = 128;
 
+const issued = new WeakSet<object>();
+
 /**
  * The only author a write accepts. The host makes one from the principal it authenticated, and an
- * operation never reads an author from its input. Nobody can build an Actor with a literal or
- * change one after it exists.
+ * operation never reads an author from its input. An object that `stamp()` did not make is refused,
+ * and a stamped one cannot change.
  */
 export class Actor implements Author {
   readonly kind: PrincipalKind;
   readonly name: string;
   readonly scopes: readonly string[];
-  #stamped = true;
 
   private constructor(kind: PrincipalKind, name: string, scopes: readonly string[]) {
     this.kind = kind;
@@ -37,18 +38,18 @@ export class Actor implements Author {
   }
 
   static of(input: StampInput): Actor {
-    const scopes = (input as { scopes?: unknown } | null)?.scopes;
-    const ok =
-      readAuthor(input) !== undefined &&
-      (scopes === undefined || (Array.isArray(scopes) && scopes.every((s) => typeof s === "string" && s !== "")));
-    if (!ok) {
+    const author = readAuthor(input);
+    const scopes = author ? (input as { scopes?: unknown }).scopes : undefined;
+    if (!author || !(scopes === undefined || (Array.isArray(scopes) && scopes.every((s) => typeof s === "string" && s !== "")))) {
       throw new CommentsError("INVALID_AUTHOR", `an author needs a kind (${PRINCIPAL_KINDS.join(", ")}), a name, and scopes that are a list of text`);
     }
-    return new Actor(input.kind, input.name, input.scopes ?? []);
+    const actor = new Actor(author.kind, author.name, (scopes as string[] | undefined) ?? []);
+    issued.add(actor);
+    return actor;
   }
 
   static is(value: unknown): value is Actor {
-    return typeof value === "object" && value !== null && #stamped in value;
+    return typeof value === "object" && value !== null && issued.has(value);
   }
 }
 
@@ -56,7 +57,7 @@ export class Actor implements Author {
 export const stamp = (input: StampInput): Actor => Actor.of(input);
 
 export function assertActor(value: unknown): Actor {
-  if (!Actor.is(value)) throw new CommentsError("INVALID_AUTHOR", "the host must pass an author made with stamp()");
+  if (!Actor.is(value) || !readAuthor(value)) throw new CommentsError("INVALID_AUTHOR", "the host must pass an author made with stamp()");
   return value;
 }
 

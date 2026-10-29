@@ -11,7 +11,7 @@ export interface RelativePositionJson {
 
 export interface TextAnchor {
   type: "text";
-  /** The text under the range when the comment was made. */
+  /** The text under the range when the comment was made. This check does not compare it with the document. */
   text: string;
   start: RelativePositionJson;
   end: RelativePositionJson;
@@ -82,7 +82,10 @@ function position(raw: unknown, field: string): RelativePositionJson {
 
 const parseText = (raw: Record<string, unknown>): TextAnchor => {
   if (typeof raw.text !== "string" || raw.text === "" || raw.text.length > MAX_QUOTE) bad(`text must be 1 to ${MAX_QUOTE} characters`);
-  return { type: "text", text: raw.text as string, start: position(raw.start, "start"), end: position(raw.end, "end") };
+  const start = position(raw.start, "start");
+  const end = position(raw.end, "end");
+  if (start.item === undefined || end.item === undefined) bad("a text range needs an item position at each end");
+  return { type: "text", text: raw.text as string, start, end };
 };
 
 export const BUILT_IN_KINDS: readonly AnchorKind[] = [

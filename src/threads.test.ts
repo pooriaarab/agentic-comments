@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { describe, expect, test } from "vitest";
-import { Comments, CommentsError, stamp, textAnchor, type Anchor } from "./index.js";
+import { Actor, Comments, CommentsError, stamp, textAnchor, type Anchor } from "./index.js";
 
 // Ways this model can fail, written before the code:
 //  1. A caller claims an author, forges an actor, or edits one after stamping.
@@ -315,5 +315,147 @@ describe("two replicas", () => {
     expect(ca.list().map((t) => t.id)).toEqual([id]);
     expect(ca.problems().map((p) => p.id)).toEqual(["evil"]);
     expect(code(() => ca.get("evil"))).toBe("CORRUPT");
+  });
+});
+
+describe("review findings", () => {
+  const ISO = "2026-01-01T00:00:00.000Z";
+  const rawMessage = (over: Record<string, unknown> = {}) => ({ id: "m-raw", at: ISO, author: { kind: "human", name: "eve" }, body: "raw", mentions: [], ...over });
+  const rawMessages = (doc: Y.Doc, id: string) => doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
+
+  test("a caller cannot change a stored message through the value it got back", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    const reply = comments.reply(id, { body: "x" }, bot);
+    reply.author.kind = "human";
+    reply.author.name = "alice";
+    expect(comments.get(id).messages[1].author).toEqual({ kind: "agent_of_human", name: "scribe" });
+    const fresh = new Y.Doc();
+    Y.applyUpdate(fresh, Y.encodeStateAsUpdate(doc));
+    expect(make(fresh).get(id).messages[1].author).toEqual({ kind: "agent_of_human", name: "scribe" });
+  });
+
+  test("the status record does not share an object with the first message", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "hi" }, bot);
+    thread.messages[0].author.kind = "human";
+    expect(comments.get(thread.id).statusBy.kind).toBe("agent_of_human");
+  });
+
+  test("an actor built through the constructor is refused", () => {
+    const forged = new (Actor as unknown as new (k: string, n: string, s: string[]) => Actor)("admin", "", []);
+    const comments = make();
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    expect(code(() => comments.reply(id, { body: "y" }, forged))).toBe("INVALID_AUTHOR");
+    expect(comments.get(id).messages).toHaveLength(1);
+  });
+
+  test("stamp reads its input once, so a getter cannot swap the kind", () => {
+    let reads = 0;
+    const input = {
+      get kind() {
+        return reads++ === 0 ? "human" : "bogus";
+      },
+      name: "n",
+    };
+    expect(stamp(input as never).kind).toBe("human");
+  });
+
+  test("one bad message is skipped and reported, and the good ones stay", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    rawMessages(doc, id).push([rawMessage({ author: { name: "no-kind" } })]);
+    expect(comments.get(id).messages.map((m) => m.body)).toEqual(["hi"]);
+    expect(comments.list().map((t) => t.id)).toEqual([id]);
+    expect(comments.problems().map((p) => p.id)).toEqual([id]);
+    comments.reply(id, { body: "still works" }, bot);
+    expect(comments.get(id).messages).toHaveLength(2);
+  });
+
+  test("a thread with no good message is skipped", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    const list = rawMessages(doc, id);
+    list.delete(0, 1);
+    list.push([rawMessage({ at: "1" })]);
+    expect(comments.list()).toEqual([]);
+    expect(code(() => comments.get(id))).toBe("CORRUPT");
+  });
+
+  test("stored messages with a loose time, an empty or repeated id, or bad mentions are skipped", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    const first = comments.get(id).messages[0];
+    rawMessages(doc, id).push([
+      rawMessage({ at: "1" }),
+      rawMessage({ at: "Tue" }),
+      rawMessage({ id: "" }),
+      rawMessage({ id: first.id }),
+      rawMessage({ mentions: ["two words"] }),
+      rawMessage({ mentions: Array.from({ length: 51 }, (_, i) => `u${i}`) }),
+    ]);
+    expect(comments.get(id).messages).toHaveLength(1);
+    expect(comments.problems()).toHaveLength(6);
+  });
+
+  test("a thread key that get refuses is not listed", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    comments.add({ anchor: cell, body: "hi" }, ada);
+    const evil = new Y.Map<unknown>();
+    doc.getMap<Y.Map<unknown>>("comments.threads").set("", evil);
+    expect(comments.list()).toHaveLength(1);
+    expect(comments.problems().map((p) => p.id)).toEqual([""]);
+  });
+
+  test("a body with more than 50 mentions is refused", () => {
+    const body = Array.from({ length: 51 }, (_, i) => `@u${i}`).join(" ");
+    expect(code(() => make().add({ anchor: cell, body }, ada))).toBe("INVALID_INPUT");
+  });
+
+  test("handles match the same way on write and on search", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "hi @Bob", mentions: ["@@Eve"] }, ada);
+    expect(thread.messages[0].mentions).toEqual(["bob", "eve"]);
+    expect(comments.list({ mentioning: "BOB" })).toHaveLength(1);
+    expect(comments.list({ mentioning: "@@eve" })).toHaveLength(1);
+  });
+
+  test("a custom kind cannot return another type or share its result with the caller", () => {
+    const liar = { type: "pin", parse: () => ({ type: "text" }) };
+    const alias = { type: "alias", parse: (raw: Record<string, unknown>) => raw as { type: string } };
+    const comments = new Comments(new Y.Doc(), { now: clock, anchors: [liar, alias] });
+    expect(code(() => comments.add({ anchor: { type: "pin" } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    const given = { type: "alias", n: 1 };
+    const thread = comments.add({ anchor: given as never, body: "x" }, ada);
+    given.n = 2;
+    expect((comments.get(thread.id).anchor as unknown as { n: number }).n).toBe(1);
+  });
+
+  test("a text range must use two item positions", () => {
+    const text = new Y.Doc().getText("t");
+    text.insert(0, "hello");
+    const good = textAnchor(text, 0, 5);
+    const comments = make();
+    for (const anchor of [
+      { ...good, start: { tname: "a" }, end: { tname: "b" } },
+      { ...good, start: { tname: "a" } },
+      { ...good, end: { type: { client: 1, clock: 0 } } },
+    ]) {
+      expect(code(() => comments.add({ anchor: anchor as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    }
+  });
+
+  test("bad options and filters fail with a CommentsError", () => {
+    const comments = make();
+    expect(code(() => comments.list(null as never))).toBe("INVALID_INPUT");
+    expect(code(() => comments.list({ mentioning: 5 as never }))).toBe("INVALID_INPUT");
+    expect(code(() => comments.list({ anchorType: 5 as never }))).toBe("INVALID_INPUT");
+    const broken = new Comments(new Y.Doc(), { now: () => new Date(Number.NaN) });
+    expect(code(() => broken.add({ anchor: cell, body: "x" }, ada))).toBe("INVALID_INPUT");
   });
 });

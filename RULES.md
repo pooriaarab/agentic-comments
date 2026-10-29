@@ -8,4 +8,4 @@ These rules bind every agent that uses this package.
 4. Report a failed call as a failure. No silent success follows a refusal.
 5. Treat a malformed thread as bad data. Do not repair or trust it.
 
-Pack: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs,mcp.
+Pack: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
