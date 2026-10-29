@@ -43,6 +43,9 @@ export const MAX_QUOTE_LENGTH = 2_000;
 const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
 const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
 
+/** True when a quote starts with a low surrogate or ends with a high one: half a character. */
+const isLoneHalf = (code: number, atStart: boolean): boolean => (atStart ? isLow(code) : isHigh(code));
+
 /** True when `index` sits between the two halves of a surrogate pair. */
 function splits(text: string, index: number): boolean {
   return index > 0 && index < text.length && isHigh(text.charCodeAt(index - 1)) && isLow(text.charCodeAt(index));
@@ -137,9 +140,10 @@ const commonPrefix = (a: string, b: string): number => {
  *
  * 1. With `edits` (the changes from the text the anchor was made for to `newText`), map the range. If it
  *    still holds the quote, the anchor is `attached` by `mapped`. If the edits delete the range, it is `orphaned`.
- * 2. If the range is gone from view (no edits, or the mapped range is outside the text), search for the quote. One match wins. With several, the match whose surrounding text fits
+ * 2. With no edits and a range that does not hold the quote, search for the quote. One match wins. With several, the match whose surrounding text fits
  *    best wins, if that fit is strictly better than every other. A tie is `orphaned`: a wrong place is worse than none.
- * 3. With edits, a mapped range that holds other text is `edited`. The quote is not searched then.
+ * 3. With edits, a mapped range that holds other text is `edited`, and one outside the text is `orphaned`.
+ *    The quote is not searched then. If you pass `originalLength`, the edits must fit it and `newText`.
  *
  * Without `edits`, step 1 tries the original offsets.
  */
@@ -148,6 +152,12 @@ export function resolveAnchor(anchor: TextRangeAnchor, newText: string, edits?: 
   if (typeof anchor?.quote !== "string" || anchor.quote === "") return { state: "orphaned" };
   const quote = anchor.quote;
   if (!whole(anchor.from) || !whole(anchor.to) || anchor.to - anchor.from !== quote.length) return { state: "orphaned" };
+  if (isLoneHalf(quote.charCodeAt(0), true) || isLoneHalf(quote.charCodeAt(quote.length - 1), false)) return { state: "orphaned" };
+  if (originalLength !== undefined) {
+    // The edits must fit both texts. If they do not, the edit list is bad data.
+    const final = (edits ?? []).reduce((n, e) => n - (e?.to - e?.from) + (typeof e?.insert === "string" ? e.insert.length : NaN), originalLength);
+    if (!whole(originalLength) || anchor.to > originalLength || (edits && final !== newText.length)) return { state: "orphaned" };
+  }
   let mapped: OffsetRange | null;
   try {
     mapped = edits ? mapRange({ from: anchor.from, to: anchor.to }, edits, originalLength) : { from: anchor.from, to: anchor.to };
@@ -160,9 +170,9 @@ export function resolveAnchor(anchor: TextRangeAnchor, newText: string, edits?: 
   if (valid && mapped && newText.slice(mapped.from, mapped.to) === quote) {
     return { state: "attached", from: mapped.from, to: mapped.to, method: "mapped" };
   }
-  const found = occurrences(newText, quote);
   // A list of edits is the truth about where the range went. A copy of the quote elsewhere is not it.
-  if (edits && valid && mapped) return { state: "edited", from: mapped.from, to: mapped.to };
+  if (edits) return valid && mapped ? { state: "edited", from: mapped.from, to: mapped.to } : { state: "orphaned" };
+  const found = occurrences(newText, quote).filter((at) => !splits(newText, at) && !splits(newText, at + quote.length));
   if (found.length === 1) return { state: "attached", from: found[0]!, to: found[0]! + quote.length, method: "quote" };
   if (found.length > 1) {
     const score = (at: number) =>

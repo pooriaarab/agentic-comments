@@ -131,4 +131,14 @@ describe("resolveAnchor", () => {
     expect(() => mapPosition(1, [null as unknown as Edit])).toThrow(RangeError);
     expect(resolveAnchor(createAnchor("hello", 0, 2), "hello", [null as unknown as Edit], 5)).toEqual({ state: "orphaned" });
   });
+  it("orphans when the edits do not fit the text", () => {
+    const a = createAnchor("Hello brave world. brave", 6, 11);
+    expect(resolveAnchor(a, "brave", [{ from: 0, to: 0, insert: "x".repeat(50) }])).toEqual({ state: "orphaned" });
+    expect(resolveAnchor({ quote: "ab", prefix: "", suffix: "", from: 50, to: 52 }, "ab", [], 5)).toEqual({ state: "orphaned" });
+    expect(resolveAnchor(createAnchor("a".repeat(24), 8, 13), "z".repeat(30), [{ from: 0, to: 0, insert: "Oh" }], 24)).toEqual({ state: "orphaned" });
+  });
+  it("never returns half of a surrogate pair from the quote search", () => {
+    expect(resolveAnchor({ quote: "\uDE00", prefix: "", suffix: "", from: 0, to: 1 }, "a😀b")).toEqual({ state: "orphaned" });
+    expect(resolveAnchor({ quote: "\uD83D", prefix: "", suffix: "", from: 0, to: 1 }, "a😀b")).toEqual({ state: "orphaned" });
+  });
 });
