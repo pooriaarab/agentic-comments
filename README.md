@@ -173,12 +173,16 @@ npx agentic-comments accept <id>
 ## Notifications
 
 `Notifications` turns changes into events that your app can send to a notifier. It watches the data, so it
-sees changes from other replicas too. It starts when you create it and replays no history.
+sees changes from other replicas too. It replays nothing from before you created it. A first load into an
+empty document looks like new changes, so create the stream with `muted: true` and call `unmute()` after
+that load.
 
 ```ts
 import { Notifications } from "agentic-comments";
 
-const notifications = new Notifications(comments, suggestions, { onError: (error) => report(error) });
+const notifications = new Notifications(comments, suggestions, { muted: true, onError: (error, source) => report(error, source) });
+// ...load the document or connect the provider, then:
+notifications.unmute();
 const stop = notifications.subscribe(async (event) => {
   if (event.type === "mention") await notify(event.mention, event.threadId); // fetch the text with the ids
 });
@@ -189,13 +193,17 @@ const stop = notifications.subscribe(async (event) => {
 - An event holds ids, the actor, `machineMade`, the anchor type, `source` (`local` or `remote`), and a time.
   It never holds the text of a comment, a suggestion, or a change. Fetch that with the ids.
 - The same change has the same `id` on every replica. Delivery is at least once, so a notifier that must
-  send once keeps the ids it has sent. One replica never emits the same id twice.
+  send once keeps the ids it has sent. A replica remembers its last 10,000 ids (`seenLimit`) and drops a
+  repeat within that window. Two accepts at once give one id, and the actor can differ between replicas.
+  An id for a status change includes the clock time, so a clock coarser than the changes can merge two.
 - Use `source` to decide where to send. If every replica runs a notifier, filter on `local`, or each
   replica sends its own copy of every remote change.
-- A listener that throws, or returns a rejected promise, cannot break a write or another listener. The
+- Events are delivered after the Yjs transaction that caused them has finished, so a listener can write to
+  the document. A listener that throws, or returns a rejected promise, cannot break a write or another
+  listener. The
   error goes to `onError`, or to `errors()`.
 - A change that arrives as a whole thread, with its replies and status inside, makes an event for each
-  message and for a resolved status. A reopen inside such a thread makes none.
+  message and for a resolved status. A reopen inside such a thread makes none. A message past the thread's read limit makes no event.
 
 ## Author kinds
 

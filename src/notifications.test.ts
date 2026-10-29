@@ -11,6 +11,9 @@ import { ACCEPT_SCOPE, Comments, Notifications, stamp, Suggestions, textAnchor, 
 //  6. A listener that throws, or rejects, breaks the write, other listeners, or goes unseen.
 //  7. A peer's malformed data makes an event, or a throw.
 //  8. After unsubscribe or close, events still arrive.
+// 10. One bad record in a batch hides the events for good records in the same batch.
+// 11. A first load into an empty document replays old history, or a bad first message names the wrong actor.
+// 12. A listener that writes, closes the stream, or an error handler that throws breaks the write.
 //  9. A mention event names the wrong handle, or is lost for a thread's first message.
 
 const ada = stamp({ kind: "human", name: "ada" });
@@ -29,7 +32,7 @@ const host: SuggestionHost = {
   revert: () => undefined,
 };
 
-function replica(source?: Y.Doc, onError?: (error: unknown) => void) {
+function replica(source?: Y.Doc, onError?: (error: unknown, source: "listener" | "data") => void) {
   const ydoc = new Y.Doc();
   ydoc.getText("t");
   if (source) Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(source));
@@ -258,3 +261,133 @@ describe("data from a peer", () => {
     expect(r.events).toEqual([]);
   });
 });
+
+describe("batches, loads, and re-entry", () => {
+  const evilThread = (doc: Y.Doc, key: string, messages: unknown[]) => {
+    const fields = new Y.Map<unknown>();
+    doc.getMap<Y.Map<unknown>>("comments.threads").set(key, fields);
+    fields.set("anchor", cell);
+    fields.set("state", { status: "open", by: { kind: "human", name: "eve" }, at: "2026-01-01T00:00:00.000Z" });
+    const list = new Y.Array<unknown>();
+    fields.set("messages", list);
+    list.push(messages);
+  };
+  const at = "2026-01-01T00:00:00.000Z";
+
+  test("a bad thread in the same transaction does not hide the events for a good one", () => {
+    const source = new Y.Doc();
+    const made = new Comments(source, { now: clock });
+    source.transact(() => {
+      source.getMap<Y.Map<unknown>>("comments.threads").set("a-empty", new Y.Map());
+      made.add({ anchor: cell, body: "hello @grace" }, ada);
+      source.getMap<Y.Map<unknown>>("comments.threads").set("z-empty", new Y.Map());
+    });
+    const r = replica();
+    r.events.length = 0;
+    Y.applyUpdate(r.ydoc, Y.encodeStateAsUpdate(source));
+    expect(r.types()).toEqual(["thread.created", "mention"]);
+    expect(r.notifications.errors().length).toBeGreaterThan(0);
+  });
+
+  test("several messages added at once on one thread each make an event, and one bad one does not hide the rest", () => {
+    const a = replica();
+    const t = a.comments.add({ anchor: cell, body: "start" }, ada);
+    const b = replica(a.ydoc);
+    b.events.length = 0;
+    a.ydoc.transact(() => {
+      for (const body of ["one", "two"]) a.comments.reply(t.id, { body }, bot);
+      (a.ydoc.getMap<Y.Map<unknown>>("comments.threads").get(t.id)!.get("messages") as Y.Array<unknown>).push([{ id: "m-bad", at, author: { name: "x" }, body: "x", mentions: [] }]);
+      a.comments.reply(t.id, { body: "three" }, ada);
+    });
+    sync(a.ydoc, b.ydoc);
+    expect(b.types()).toEqual(["message.added", "message.added", "message.added"]);
+  });
+
+  test("a notifier that is muted drops the first load, and later changes make events", () => {
+    const a = replica();
+    a.comments.add({ anchor: cell, body: "old @grace" }, ada);
+    const ydoc = new Y.Doc();
+    ydoc.getText("t");
+    const comments = new Comments(ydoc, { now: clock });
+    const notifications = new Notifications(comments, new Suggestions(comments, host), { muted: true });
+    const seen: string[] = [];
+    notifications.subscribe((e) => void seen.push(e.type));
+    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    expect(seen).toEqual([]);
+    notifications.unmute();
+    comments.add({ anchor: cell, body: "new" }, grace);
+    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    expect(seen).toEqual(["thread.created"]);
+  });
+
+  test("a notifier that is not muted reports the first load as remote events", () => {
+    const a = replica();
+    a.comments.add({ anchor: cell, body: "old" }, ada);
+    const b = replica();
+    b.events.length = 0;
+    Y.applyUpdate(b.ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    expect(b.types()).toEqual(["thread.created"]);
+    expect(b.events[0].source).toBe("remote");
+  });
+
+  test("a bad first message makes no thread.created event that names someone else", () => {
+    const r = replica();
+    r.events.length = 0;
+    r.ydoc.transact(() => evilThread(r.ydoc, "evil", [
+      { id: "m1", at, author: { name: "no-kind" }, body: "x", mentions: [] },
+      { id: "m2", at, author: { kind: "human", name: "ada" }, body: "reply", mentions: [] },
+    ]));
+    expect(r.types()).not.toContain("thread.created");
+    expect(r.events.every((e) => e.type !== "thread.created" || e.messageId !== "m2")).toBe(true);
+    expect(r.notifications.errors().length).toBeGreaterThan(0);
+  });
+
+  test("an error handler that throws, a listener that writes, and a listener that closes the stream do not break the write", () => {
+    const r = replica(undefined, () => {
+      throw new Error("the handler failed too");
+    });
+    r.notifications.subscribe(() => {
+      throw new Error("down");
+    });
+    const t = r.comments.add({ anchor: cell, body: "x" }, ada);
+    expect(r.comments.get(t.id).messages).toHaveLength(1);
+    const w = replica();
+    let wrote = false;
+    w.notifications.subscribe((e) => {
+      if (e.type === "thread.created" && !wrote) {
+        wrote = true;
+        w.comments.reply(e.threadId!, { body: "auto reply" }, bot);
+      }
+    });
+    const made = w.comments.add({ anchor: cell, body: "start" }, ada);
+    expect(w.comments.get(made.id).messages).toHaveLength(2);
+    expect(w.types().filter((x) => x === "message.added")).toHaveLength(1);
+    const c = replica();
+    c.notifications.subscribe(() => c.notifications.close());
+    c.comments.add({ anchor: cell, body: "x" }, ada);
+    c.comments.add({ anchor: cell, body: "y" }, ada);
+    expect(c.events).toHaveLength(1);
+  });
+
+  test("errors tell a listener failure from bad data", () => {
+    const seen: string[] = [];
+    const r = replica(undefined, (_e, source) => void seen.push(source));
+    r.notifications.subscribe(() => {
+      throw new Error("down");
+    });
+    r.comments.add({ anchor: cell, body: "x" }, ada);
+    r.ydoc.getMap<Y.Map<unknown>>("comments.threads").set("bad", new Y.Map());
+    expect(seen).toEqual(["listener", "data"]);
+  });
+
+  test("the window of remembered ids can be set, and a bad one is refused", () => {
+    const r = replica();
+    expect(() => new Notifications(r.comments, r.suggestions, { seenLimit: 0 })).toThrow();
+    const small = new Notifications(r.comments, r.suggestions, { seenLimit: 2 });
+    const seen: string[] = [];
+    small.subscribe((e) => void seen.push(e.id));
+    for (const body of ["a", "b", "c"]) r.comments.add({ anchor: cell, body }, ada);
+    expect(seen).toHaveLength(3);
+  });
+});
+
