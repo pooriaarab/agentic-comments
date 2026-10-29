@@ -2,6 +2,19 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.6.1
+
+### Fixed
+
+- `agentic-comments mcp --help`, `-h`, `--version`, `-V`, and `-v` print and exit 0 before the server starts. They used to exit 2.
+- The MCP server names `AGENTIC_COMMENTS_AS` in its startup error when no principal is set.
+- The `zod` dependency is `^4.6.7`. Zod below 4.6.6 can exhaust memory on oversized constrained collections (GHSA-mrhx-c7xc-m3w5).
+- The publish workflow runs one publish at a time per ref, so two runs cannot both publish the same version.
+
+### Changed
+
+- The `agentic-identity` dependency is `^0.8.0`.
+
 ## 0.6.0
 
 ### Added
