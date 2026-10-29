@@ -53,6 +53,44 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Suggestions
+
+Your app owns the change. This package stores it as JSON, tracks the decision, and calls your `apply`.
+
+```ts
+import { ACCEPT_SCOPE, Suggestions } from "agentic-comments";
+
+const suggestions = new Suggestions(comments, {
+  apply(change, { anchor, by, ydoc }) {
+    // Edit ydoc here. Throw before you edit when the change cannot apply.
+    return { /* a receipt, JSON that lets revert undo this edit */ };
+  },
+  revert(receipt, { ydoc }) {
+    // Undo a duplicate edit. Every replica runs this at once, so use an edit that merges to one result.
+    // Throw before you change anything.
+  },
+});
+
+const s = suggestions.add({ anchor, change: { replacement: "bold" }, summary: "Word choice" }, scribe);
+suggestions.accept(s.id, ada);
+```
+
+- A person accepts or rejects. An agent needs the `comments:accept` scope, and never decides a
+  suggestion it wrote. Names match exactly, and two agents with the same name count as one, whatever their
+  kinds. A `user_token` needs no scope, but it cannot decide a suggestion by an agent of the same name.
+- Accept checks that a text anchor still matches the document, then runs the edit and writes the
+  record in one step. If `apply` throws before it edits, the suggestion stays pending. If it edits and
+  then fails, the decision is recorded without a receipt, and `problems()` reports it. A host that cannot undo a double apply must say `idempotent: true`.
+- Two replicas that accept before they meet each apply the edit. After the merge, the application of
+  the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
+  accepted.
+- A receipt is stored data. Check it in `revert` before you use it.
+- `apply` and `revert` must be synchronous, and must edit only the Yjs document. `apply` cannot accept
+  the suggestion it is applying.
+- A peer that can write the document can write a decision record. Records with a bad author, time, or
+  receipt, or from a decider who wrote the suggestion as an agent, are not counted. A well-formed forged
+  record is. The sync layer must decide who may write.
+
 ## Author kinds
 
 | Kind | Meaning | Label |
@@ -100,34 +138,3 @@ npm run ci:local
 ## License
 
 MIT.
-
-## Suggestions
-
-Your app owns the change. This package stores it as JSON, tracks the decision, and calls your `apply`.
-
-```ts
-import { ACCEPT_SCOPE, Suggestions } from "agentic-comments";
-
-const suggestions = new Suggestions(comments, {
-  apply(change, { anchor, by, ydoc }) {
-    // Edit ydoc here. Throw before you edit when the change cannot apply.
-    return { /* a receipt, JSON that lets revert undo this edit */ };
-  },
-  revert(receipt, { ydoc }) {
-    // Undo the edit. It must be safe to run more than once.
-  },
-});
-
-const s = suggestions.add({ anchor, change: { replacement: "bold" }, summary: "Word choice" }, scribe);
-suggestions.accept(s.id, ada);
-```
-
-- A person accepts or rejects. An agent needs the `comments:accept` scope, and never decides a
-  suggestion it wrote. Two agents with the same name count as one.
-- Accept makes the check, the edit, and the record in one step. If `apply` throws, the suggestion
-  stays pending. A host that cannot undo a double apply must say `idempotent: true`.
-- Two replicas that accept before they meet each apply the edit. After the merge, the application of
-  the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
-  accepted.
-- A receipt is stored data. Check it in `revert` before you use it.
-- `apply` and `revert` must be synchronous, and must edit only the Yjs document.

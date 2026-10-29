@@ -16,6 +16,10 @@ import { ACCEPT_SCOPE, Comments, CommentsError, stamp, Suggestions, textAnchor, 
 // 11. A peer writes a bad suggestion or a forged record and breaks listing or status.
 // 12. A caller changes the stored payload through a value it got back.
 // 13. A host with no way to undo a duplicate is accepted.
+// 14. A junk or forged record from a peer wins settle and undoes a real accept.
+// 15. A failure after apply edits the document leaves a half change, and a second accept doubles it.
+// 16. A token that an agent holds decides the agent's own suggestion with no scope.
+// 17. apply gets an anchor that no longer matches the document, or accepts the suggestion it is applying.
 
 const ada = stamp({ kind: "human", name: "ada" });
 const grace = stamp({ kind: "human", name: "grace" });
@@ -361,3 +365,124 @@ describe("data from a peer", () => {
     expect(code(() => r.suggestions.get("evil"))).toBe("CORRUPT");
   });
 });
+
+describe("records and edits that go wrong", () => {
+  const marker = (text: string): SuggestionHost => ({
+    idempotent: true,
+    apply(_change, ctx) {
+      ctx.ydoc.getText("t").insert(0, text);
+      return null;
+    },
+  });
+  const cellAnchor = { type: "cell", key: "A1" } as const;
+
+  test("a junk record from a peer cannot win settle or undo a real accept", () => {
+    const a = replica(textHost());
+    const s = suggest(a);
+    a.suggestions.accept(s.id, ada);
+    const applied = a.ydoc.getMap("comments.suggestion-applied");
+    const real = applied.size;
+    for (const junk of [{}, null, { by: { kind: "human", name: "x" }, at: "2026-01-01T00:00:00.000Z", receipt: Number.NaN }, { by: { kind: "human", name: "x" }, at: "2026-01-01T00:00:00.000Z", receipt: "r".repeat(20_000) }]) {
+      applied.set(`${s.id}:0`, junk);
+      a.suggestions.settle();
+      expect(a.text()).toBe("hello bold world");
+      expect(a.suggestions.get(s.id).status).toBe("accepted");
+      expect(a.suggestions.get(s.id).decidedBy).toEqual({ kind: "human", name: "ada" });
+    }
+    applied.set("no-such-suggestion:0", { by: { kind: "human", name: "x" }, at: "2026-01-01T00:00:00.000Z", receipt: null });
+    a.suggestions.settle();
+    expect(applied.size).toBe(real + 2);
+    expect(a.text()).toBe("hello bold world");
+  });
+
+  test("a record from a decider who decided their own work is not counted", () => {
+    const r = replica(textHost());
+    const s = suggest(r);
+    r.ydoc.getMap("comments.suggestion-applied").set(`${s.id}:1`, { by: { kind: "agent", name: "scribe" }, at: "2026-01-01T00:00:00.000Z", receipt: null });
+    expect(r.suggestions.get(s.id).status).toBe("pending");
+  });
+
+  test("when apply edits and then returns a bad receipt, the decision is recorded and a second accept does not double the edit", () => {
+    const r = replica({ ...marker("X"), apply: (_c, ctx) => { ctx.ydoc.getText("t").insert(0, "X"); return { bad: Number.NaN }; } });
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    expect(r.suggestions.accept(s.id, ada).status).toBe("accepted");
+    r.suggestions.accept(s.id, grace);
+    expect(r.text()).toBe("Xhello brave world");
+    expect(r.suggestions.problems().some((p) => p.reason.includes("apply failed after it edited"))).toBe(true);
+  });
+
+  test("when apply edits and then throws, the decision is recorded and the edit lands once", () => {
+    const r = replica({ idempotent: true, apply: (_c, ctx) => { ctx.ydoc.getText("t").insert(0, "X"); throw new Error("late failure"); } });
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    expect(r.suggestions.accept(s.id, ada).status).toBe("accepted");
+    r.suggestions.accept(s.id, grace);
+    expect(r.text()).toBe("Xhello brave world");
+  });
+
+  test("an async apply that edits before it returns is recorded, and one that edits nothing is refused", () => {
+    const edits = replica({ idempotent: true, apply: (async (_c: unknown, ctx: { ydoc: Y.Doc }) => { ctx.ydoc.getText("t").insert(0, "X"); }) as never });
+    const s = edits.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    expect(edits.suggestions.accept(s.id, ada).status).toBe("accepted");
+    expect(edits.text()).toBe("Xhello brave world");
+  });
+
+  test("a bad clock fails before apply runs", () => {
+    const counter = { applies: 0 };
+    const ydoc = new Y.Doc();
+    ydoc.getText("t").insert(0, "hello");
+    let broken = false;
+    const comments = new Comments(ydoc, { now: () => (broken ? new Date(Number.NaN) : new Date()) });
+    const suggestions = new Suggestions(comments, { idempotent: true, apply: () => { counter.applies++; return null; } });
+    const s = suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    broken = true;
+    expect(code(() => suggestions.accept(s.id, ada))).toBe("INVALID_INPUT");
+    expect(counter.applies).toBe(0);
+  });
+
+  test("a token that an agent holds cannot decide the agent's own suggestion", () => {
+    const r = replica(textHost());
+    const token = stamp({ kind: "user_token", name: "scribe" });
+    const own = r.suggestions.add({ anchor: textAnchor(r.ydoc.getText("t"), 6, 11), change: { replacement: "bold" } }, token);
+    expect(code(() => r.suggestions.accept(own.id, token))).toBe("FORBIDDEN");
+    expect(code(() => r.suggestions.reject(own.id, token))).toBe("FORBIDDEN");
+    const byAgent = suggest(r, bot);
+    expect(r.suggestions.accept(byAgent.id, stamp({ kind: "user_token", name: "ada" })).decidedBy).toEqual({ kind: "user_token", name: "ada" });
+  });
+
+  test("a person may decide their own suggestion through a token", () => {
+    const r = replica(textHost());
+    const s = r.suggestions.add({ anchor: textAnchor(r.ydoc.getText("t"), 6, 11), change: { replacement: "bold" } }, ada);
+    expect(r.suggestions.accept(s.id, stamp({ kind: "user_token", name: "ada" })).status).toBe("accepted");
+  });
+
+  test("apply never sees an anchor that no longer matches the document, even for a host that does not check", () => {
+    const counter = { applies: 0 };
+    const r = replica({ idempotent: true, apply: () => { counter.applies++; return null; } });
+    const s = r.suggestions.add({ anchor: textAnchor(r.ydoc.getText("t"), 6, 11), change: {} }, bot);
+    const stored = r.ydoc.getMap<Y.Map<unknown>>("comments.suggestions").get(s.id)!;
+    stored.set("anchor", { ...(stored.get("anchor") as object), text: "world" });
+    expect(code(() => r.suggestions.accept(s.id, ada))).toBe("APPLY_FAILED");
+    expect(counter.applies).toBe(0);
+    expect(r.suggestions.get(s.id).status).toBe("pending");
+  });
+
+  test("apply cannot accept the suggestion it is applying", () => {
+    const holder: { suggestions?: Suggestions; id?: string; tried: boolean } = { tried: false };
+    const r = replica({
+      idempotent: true,
+      apply: () => {
+        if (!holder.tried) {
+          holder.tried = true;
+          holder.suggestions!.accept(holder.id!, ada);
+        }
+        return null;
+      },
+    });
+    holder.suggestions = r.suggestions;
+    const s = r.suggestions.add({ anchor: cellAnchor, change: {} }, bot);
+    holder.id = s.id;
+    expect(code(() => r.suggestions.accept(s.id, ada))).toBe("APPLY_FAILED");
+    expect(r.suggestions.get(s.id).status).toBe("pending");
+  });
+});
+
