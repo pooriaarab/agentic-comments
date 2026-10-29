@@ -1,5 +1,5 @@
 import { CommentsError } from "./errors.js";
-import { parsePrincipal } from "agentic-identity";
+import { PrincipalParseError, parsePrincipal } from "agentic-identity";
 import { PRINCIPAL_KINDS, stamp, type Actor } from "./principal.js";
 
 /**
@@ -15,10 +15,10 @@ export function operatorActor(as: string | undefined, scopes: string | undefined
   }
   const list = scopes === undefined || scopes.trim() === "" ? [] : scopes.split(",").map((s) => s.trim());
   try {
-    const { kind } = parsePrincipal({ kind: value.slice(0, cut), id: "operator" }); // the kind check lives in the identity package
-    return stamp({ kind, name: value.slice(cut + 1), scopes: list });
+    const { kind, id } = parsePrincipal({ kind: value.slice(0, cut), id: value.slice(cut + 1) });
+    return stamp({ kind, name: id, scopes: list });
   } catch (error) {
-    if (error instanceof CommentsError) throw error;
-    throw new CommentsError("INVALID_AUTHOR", `the principal kind is unknown. Kinds: ${PRINCIPAL_KINDS.join(", ")}`);
+    if (!(error instanceof PrincipalParseError)) throw error;
+    throw new CommentsError("INVALID_AUTHOR", `the principal needs a known kind (${PRINCIPAL_KINDS.join(", ")}) and a name of A-Z a-z 0-9 . _ -`);
   }
 }
