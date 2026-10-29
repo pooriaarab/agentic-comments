@@ -2,7 +2,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { CommentsError } from "./errors.js";
-import { FileStore } from "./file-store.js";
+import { FileStore, lockTimeoutFrom } from "./file-store.js";
 import { TEXT_ROOT } from "./local-host.js";
 import { operatorActor } from "./operator.js";
 import { CommentsService, type AnchorSpec } from "./service.js";
@@ -36,6 +36,25 @@ const FLAGS: Record<string, "value" | "many"> = {
   "--text-file": "value",
 };
 
+const SHARED = ["--file", "--as"];
+const ANCHOR = ["--text-quote", "--occurrence", "--cell", "--slide", "--canvas"];
+const ALLOWED: Record<string, string[]> = {
+  init: ["--file", "--text", "--text-file"],
+  list: [...SHARED, "--status", "--anchor-state", "--mentioning"],
+  show: SHARED,
+  comment: [...SHARED, ...ANCHOR, "--body", "--mention"],
+  reply: [...SHARED, "--body", "--mention"],
+  resolve: SHARED,
+  reopen: SHARED,
+  relocate: SHARED,
+  suggestions: [...SHARED, "--status", "--anchor-state"],
+  suggest: [...SHARED, ...ANCHOR, "--replace", "--value", "--summary"],
+  accept: SHARED,
+  reject: SHARED,
+  mcp: SHARED,
+};
+const TAKES_ID = ["show", "reply", "resolve", "reopen", "relocate", "accept", "reject"];
+
 const COMMANDS = ["init", "list", "show", "comment", "reply", "resolve", "reopen", "relocate", "suggestions", "suggest", "accept", "reject", "mcp"];
 
 interface Parsed {
@@ -66,6 +85,13 @@ export function parseArgs(argv: string[]): Parsed {
     else if (arg in parsed.flags) throw new UsageError(`${arg} was given twice`);
     else parsed.flags[arg] = value;
   }
+  const used = [...Object.keys(parsed.flags), ...Object.keys(parsed.many)];
+  const stray = used.find((f) => !ALLOWED[command].includes(f));
+  if (stray) throw new UsageError(`${stray} does not apply to ${command}`);
+  if (parsed.id !== undefined && !TAKES_ID.includes(command)) throw new UsageError(`${command} takes no id`);
+  if (parsed.flags["--text"] !== undefined && parsed.flags["--text-file"] !== undefined) throw new UsageError("give only one of --text, --text-file");
+  const occurrence = parsed.flags["--occurrence"];
+  if (occurrence !== undefined && !/^[1-9]\d{0,8}$/.test(occurrence)) throw new UsageError("--occurrence must be a whole number, 1 or more");
   return parsed;
 }
 
@@ -131,10 +157,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   }
   if (p.command === "help") return io.out(HELP), 0;
   if (p.command === "version") return io.out(VERSION), 0;
-  const store = new FileStore(p.flags["--file"] ?? io.env.AGENTIC_COMMENTS_FILE ?? "./comments.ydoc", {
-    lockTimeoutMs: io.env.AGENTIC_COMMENTS_LOCK_TIMEOUT_MS === undefined ? undefined : Number(io.env.AGENTIC_COMMENTS_LOCK_TIMEOUT_MS),
-  });
   try {
+    const store = new FileStore(p.flags["--file"] ?? io.env.AGENTIC_COMMENTS_FILE ?? "./comments.ydoc", { lockTimeoutMs: lockTimeoutFrom(io.env) });
     if (p.command === "init") {
       const seed = p.flags["--text-file"] !== undefined ? readFileSync(p.flags["--text-file"], "utf8") : (p.flags["--text"] ?? "");
       store.create((ydoc) => ydoc.getText(TEXT_ROOT).insert(0, seed));
@@ -171,7 +195,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     }
     if (error instanceof CommentsError) {
       io.err(JSON.stringify({ error: { code: error.code, message: error.message } }));
-      return 1;
+      return error.code === "USAGE" ? 2 : 1;
     }
     throw error;
   }

@@ -41,7 +41,7 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   const tool = (name: string, description: string, shape: z.ZodRawShape, readOnly: boolean, run: (input: any) => unknown) =>
     server.registerTool(
       name,
-      { description, inputSchema: shape, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } },
+      { description, inputSchema: z.object(shape).strict() as never, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } },
       (async (input: unknown) => {
         try {
           return ok(run(input));

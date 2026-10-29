@@ -1,13 +1,17 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, describe, expect, test } from "vitest";
-import { FileStore, TEXT_ROOT } from "./local.js";
+import { FileStore, MAX_FILE, TEXT_ROOT } from "./local.js";
 
 // Ways the CLI and the MCP server can fail, written before the tests. Each runs the real built program.
+//  0. A lock timeout that is not a number makes a write wait for ever, or a lock it cannot read spins.
+//  0b. A zero-filled file loads as empty and the next write erases it, or a save grows a file past what loads.
+//  0c. Two processes clear one stale lock together, or run init together, and a write or a store is lost.
+//  0d. A flag that does not apply to a command is dropped without a word.
 //  1. A call acts with no principal, a bad kind, or an author or scope the caller picked.
 //  2. init overwrites a store, or another command invents a store that is not there.
 //  3. Two processes write at once and one write is lost.
@@ -91,7 +95,8 @@ describe("the command line", () => {
     const reply = json(cli(file, ["reply", made.id, "--body", "done"], "agent_of_human:scribe"));
     expect(reply.author).toEqual({ kind: "agent_of_human", name: "scribe" });
     expect(json(cli(file, ["resolve", made.id], "human:ada")).status).toBe("resolved");
-    expect(json(cli(file, ["reply", made.id, "--body", "late"], "human:ada")).error?.code ?? cli(file, ["reply", made.id, "--body", "late"], "human:ada").code).toBeTruthy();
+    const late = cli(file, ["reply", made.id, "--body", "late"], "human:ada");
+    expect([late.code, json(late).error.code]).toEqual([1, "THREAD_RESOLVED"]);
     expect(json(cli(file, ["reopen", made.id], "human:ada")).status).toBe("open");
     const shown = json(cli(file, ["show", made.id], "human:ada"));
     expect(shown.messages.map((m: { author: { kind: string } }) => m.author.kind)).toEqual(["human", "agent_of_human"]);
@@ -184,6 +189,96 @@ describe("the command line", () => {
   });
 });
 
+
+describe("the store under stress", () => {
+  test("a lock timeout that is not a whole number is refused, and never waits for ever", () => {
+    const file = fresh();
+    writeFileSync(`${file}.lock`, String(process.pid));
+    for (const value of ["abc", "5s", "", "-1", "1.5"]) {
+      const run = spawnSync("node", [dist("cli.js"), "list"], { env: { ...env(file, "human:ada"), AGENTIC_COMMENTS_LOCK_TIMEOUT_MS: value }, encoding: "utf8", timeout: 5_000 });
+      expect([run.status, JSON.parse(run.stderr).error.code]).toEqual([2, "USAGE"]);
+    }
+    const server = spawnSync("node", [dist("mcp-bin.js")], { env: { ...env(file, "human:ada"), AGENTIC_COMMENTS_LOCK_TIMEOUT_MS: "abc" }, encoding: "utf8", timeout: 5_000 });
+    expect(server.status).toBe(1);
+    expect(server.stderr).toContain("whole number");
+  });
+
+  test("a lock that cannot be read as a file fails fast and does not spin", () => {
+    const file = fresh();
+    mkdirSync(`${file}.lock`);
+    const started = Date.now();
+    const run = cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada");
+    expect([run.code, json(run).error.code]).toEqual([1, "STORE_LOCKED"]);
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  test("a zero-filled or cut-off store is refused, and the next write does not erase it", () => {
+    const file = fresh();
+    const good = readFileSync(file);
+    for (const bytes of [Buffer.alloc(200), good.subarray(0, good.length - 3), Buffer.concat([good, Buffer.from([1])])]) {
+      writeFileSync(file, bytes);
+      for (const args of [["list"], ["comment", "--cell", "A1", "--body", "x"]]) {
+        const run = cli(file, args, "human:ada");
+        expect([run.code, json(run).error.code]).toEqual([1, "STORE_CORRUPT"]);
+      }
+      expect(readFileSync(file).equals(bytes)).toBe(true);
+    }
+  });
+
+  test("a save that would pass the size limit is refused and writes nothing, and so is a create", () => {
+    const file = fresh();
+    const before = readFileSync(file);
+    const store = new FileStore(file);
+    expect(() => store.write((ydoc) => ydoc.getText(TEXT_ROOT).insert(0, "x".repeat(MAX_FILE + 1)))).toThrow(/STORE_FULL|would pass/);
+    expect(readFileSync(file).equals(before)).toBe(true);
+    const big = join(dir, "big.ydoc");
+    expect(() => new FileStore(big).create((ydoc) => ydoc.getText(TEXT_ROOT).insert(0, "x".repeat(MAX_FILE + 1)))).toThrow(/larger than/);
+    expect(existsSync(big)).toBe(false);
+    expect(json(cli(file, ["list"], "human:ada"))).toEqual([]);
+  });
+
+  test("six processes that meet one stale lock all write, and none is lost", async () => {
+    const file = fresh();
+    const made = json(cli(file, ["comment", "--cell", "A1", "--body", "start"], "human:ada"));
+    writeFileSync(`${file}.lock`, "2147483646");
+    const runs = await Promise.all(Array.from({ length: 6 }, (_, i) => cliAsync(file, ["reply", made.id, "--body", `reply ${i}`], "agent:bot")));
+    expect(runs.map((r) => r.code)).toEqual(Array(6).fill(0));
+    expect(json(cli(file, ["show", made.id], "human:ada")).messages).toHaveLength(7);
+  });
+
+  test("an empty lock is cleared once it is old", () => {
+    const file = fresh();
+    writeFileSync(`${file}.lock`, "");
+    expect(json(cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada")).error?.code).toBe("STORE_LOCKED");
+    writeFileSync(`${file}.lock`, "");
+    const old = new Date(Date.now() - 10_000);
+    utimesSync(`${file}.lock`, old, old);
+    expect(cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada").code).toBe(0);
+  });
+
+  test("six inits at once make one store and refuse the rest", async () => {
+    const file = join(dir, `race-${count++}.ydoc`);
+    const runs = await Promise.all(Array.from({ length: 6 }, (_, i) => cliAsync(file, ["init", "--text", `seed ${i}`], "human:ada")));
+    expect(runs.filter((r) => r.code === 0)).toHaveLength(1);
+    expect(runs.filter((r) => r.code === 1).every((r) => JSON.parse(r.err).error.code === "STORE_EXISTS")).toBe(true);
+  });
+
+  test("a flag that does not apply is refused, and so are both seed flags and a stray id", () => {
+    const file = fresh();
+    for (const args of [["accept", "x", "--replace", "y"], ["list", "--body", "x"], ["list", "extra"], ["init", "--text", "a", "--text-file", "b"], ["comment", "--cell", "A1", "--body", "x", "--status", "open"], ["comment", "--text-quote", "a", "--occurrence", "0", "--body", "x"]]) {
+      const run = cli(file, args, "human:ada");
+      expect([run.code, json(run).error.code]).toEqual([2, "USAGE"]);
+    }
+  });
+
+  test("an ambiguous quote gives a short error however many places match", () => {
+    const file = fresh("a ".repeat(20_000));
+    const run = cli(file, ["comment", "--text-quote", "a", "--body", "x"], "human:ada");
+    expect(json(run).error.message.length).toBeLessThan(900);
+    expect(json(run).error.message).toContain("20000 places");
+  });
+});
+
 describe("the MCP server", () => {
   async function connect(file: string, as: string, scopes?: string): Promise<Client> {
     const transport = new StdioClientTransport({ command: "node", args: [dist("mcp-bin.js")], env: Object.fromEntries(Object.entries(env(file, as, scopes)).filter(([, v]) => v !== undefined)) as Record<string, string> });
@@ -206,13 +301,15 @@ describe("the MCP server", () => {
     await client.close();
   });
 
-  test("a message names the principal the operator set, whatever the tool input says", async () => {
+  test("a message names the principal the operator set, and a tool call that names an author is refused", async () => {
     const client = await connect(fresh(), "agent_of_human:scribe");
-    const made = await call(client, "add_comment", { anchor: { type: "cell", key: "A1" }, body: "hi", author: { kind: "human", name: "boss" } });
-    expect(made.isError).toBe(false);
+    const claimed = (await client.callTool({ name: "add_comment", arguments: { anchor: { type: "cell", key: "A1" }, body: "hi", author: { kind: "human", name: "boss" } } })) as { isError?: boolean };
+    expect(claimed.isError).toBe(true);
+    const made = await call(client, "add_comment", { anchor: { type: "cell", key: "A1" }, body: "hi" });
     expect(made.value.messages[0].author).toEqual({ kind: "agent_of_human", name: "scribe" });
-    const reply = await call(client, "reply_to_thread", { id: made.value.id, body: "again", author: "human:boss" });
-    expect(reply.value.author).toEqual({ kind: "agent_of_human", name: "scribe" });
+    const sneaky = (await client.callTool({ name: "reply_to_thread", arguments: { id: made.value.id, body: "again", author: "human:boss" } })) as { isError?: boolean };
+    expect(sneaky.isError).toBe(true);
+    expect((await call(client, "get_thread", { id: made.value.id })).value.messages).toHaveLength(1);
     await client.close();
   });
 
@@ -239,6 +336,26 @@ describe("the MCP server", () => {
     expect(viaMcp.value).toEqual(viaCli);
     expect((await call(client, "list_threads", {})).value).toEqual(json(cli(file, ["list"], "agent:bot")));
     expect((await call(client, "get_thread", { id: "nope" })).value.error.code).toBe("NO_THREAD");
+    await client.close();
+  });
+
+  test("a mutating action returns the same shape over both faces, and so does an error", async () => {
+    const strip = (v: unknown): unknown =>
+      JSON.parse(JSON.stringify(v, (key, value: unknown) => (key === "id" || key === "client" || key === "clock" || key === "at" || key === "statusAt" || key === "createdAt" || key === "decidedAt" ? "-" : value)));
+    const a = fresh();
+    const b = fresh();
+    const client = await connect(b, "agent_of_human:scribe");
+    const comment = json(cli(a, ["comment", "--cell", "A1", "--body", "hi @ada"], "agent_of_human:scribe"));
+    const viaMcp = await call(client, "add_comment", { anchor: { type: "cell", key: "A1" }, body: "hi @ada" });
+    expect(strip(viaMcp.value)).toEqual(strip(comment));
+    const reply = json(cli(a, ["reply", comment.id, "--body", "more"], "agent_of_human:scribe"));
+    expect(strip((await call(client, "reply_to_thread", { id: viaMcp.value.id, body: "more" })).value)).toEqual(strip(reply));
+    const suggestion = json(cli(a, ["suggest", "--text-quote", "brave new", "--replace", "bold fresh", "--summary", "tone"], "agent_of_human:scribe"));
+    const viaSuggest = await call(client, "suggest_change", { anchor: { type: "text", quote: "brave new" }, change: { replace: "bold fresh" }, summary: "tone" });
+    expect(strip(viaSuggest.value)).toEqual(strip(suggestion));
+    const missing = cli(a, ["resolve", "nope"], "human:ada");
+    const viaError = await call(await connect(b, "human:ada"), "resolve_thread", { id: "nope" });
+    expect(viaError.value.error.code).toBe(json(missing).error.code);
     await client.close();
   });
 

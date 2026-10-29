@@ -1,11 +1,9 @@
 {
   "mcpServers": {
     "agentic-comments": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "agentic-comments",
-        "mcp"
+        "./dist/mcp-bin.js"
       ],
       "env": {
         "AGENTIC_COMMENTS_FILE": "./comments.ydoc",

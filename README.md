@@ -128,8 +128,13 @@ suggestions.accept(s.id, ada);
 ## CLI and MCP server
 
 Both run on a local store: one file that holds a Yjs document. The text is in the `text` root, and
-non-text values are in the `values` map. A write takes a lock file and saves with a rename, so parallel
-processes lose nothing. A lock left by a dead process is cleared.
+non-text values are in the `values` map. A file starts with a hash, so a damaged or zero-filled file is refused and not read as empty. A write
+takes a lock file, saves with a rename, and runs again if the file changed meanwhile, so parallel processes
+lose nothing. A lock left by a dead process, or an empty one older than two seconds, is cleared. A save that
+would pass 50 MB is refused.
+
+The package is not published yet. After `npm run build`, run `node dist/cli.js` where these examples say
+`npx agentic-comments`.
 
 ```sh
 export AGENTIC_COMMENTS_FILE=./comments.ydoc
@@ -146,10 +151,12 @@ npx agentic-comments accept <id>
 - Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
   exits 2.
 - The principal comes from `--as` or `AGENTIC_COMMENTS_AS`. Scopes come only from
-  `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author.
+  `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author,
+  and a flag that does not apply to a command is refused. `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS` sets the wait
+  for a lock, in whole milliseconds.
 - `npx agentic-comments mcp` starts the MCP server on stdio. The operator fixes the principal and the
-  scopes when the server starts. No tool takes an author or a scope, so an agent cannot pick its own kind
-  or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
+  scopes when the server starts. No tool takes an author or a scope. A call with any key a tool does not list is refused, so an agent
+  cannot pick its own kind or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
   `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`, `accept_suggestion`,
   `reject_suggestion`.
 - A text change is `{"replace": "new text"}`. A change for a cell, slide, or canvas anchor is

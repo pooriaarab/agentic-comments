@@ -14,6 +14,7 @@ export type CommentsErrorCode =
   | "STORE_EXISTS"
   | "STORE_CORRUPT"
   | "STORE_LOCKED"
+  | "STORE_FULL"
   | "USAGE";
 
 export class CommentsError extends Error {

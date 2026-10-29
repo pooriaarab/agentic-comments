@@ -1,14 +1,28 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as Y from "yjs";
 import { CommentsError } from "./errors.js";
 
-const MAX_FILE = 50 * 1024 * 1024;
+/** The most bytes a saved document holds. A save over this is refused, so a file never grows past what a load accepts. */
+export const MAX_FILE = 50 * 1024 * 1024;
+const MAGIC = Buffer.from("ACV1");
+const HASH = 32;
 const POLL_MS = 25;
+const EMPTY_LOCK_MS = 2_000;
+const ATTEMPTS = 4;
 
 export interface FileStoreOptions {
-  /** How long a write waits for another process to finish. Default 5,000 ms. */
+  /** How long a write waits for another process. A whole number of ms, 0 or more. Default 5,000. */
   lockTimeoutMs?: number;
+}
+
+/** Read the lock timeout from `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS`. Anything but a whole number of ms is an error. */
+export function lockTimeoutFrom(env: Record<string, string | undefined>): number | undefined {
+  const raw = env.AGENTIC_COMMENTS_LOCK_TIMEOUT_MS;
+  if (raw === undefined) return undefined;
+  if (!/^\d{1,9}$/.test(raw)) throw new CommentsError("USAGE", "AGENTIC_COMMENTS_LOCK_TIMEOUT_MS must be a whole number of milliseconds");
+  return Number(raw);
 }
 
 const sleep = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -22,9 +36,59 @@ function alive(pid: number): boolean {
   }
 }
 
+const digest = (data: Uint8Array): Buffer => createHash("sha256").update(data).digest();
+
+function encode(ydoc: Y.Doc): Buffer {
+  const update = Y.encodeStateAsUpdate(ydoc);
+  return Buffer.concat([MAGIC, digest(update), update]);
+}
+
+function decode(bytes: Buffer, path: string): Y.Doc {
+  const body = bytes.subarray(MAGIC.length + HASH);
+  if (bytes.length < MAGIC.length + HASH || !bytes.subarray(0, MAGIC.length).equals(MAGIC) || !bytes.subarray(MAGIC.length, MAGIC.length + HASH).equals(digest(body))) {
+    throw new CommentsError("STORE_CORRUPT", `${path} is not a saved document, or it is damaged`);
+  }
+  const ydoc = new Y.Doc();
+  try {
+    Y.applyUpdate(ydoc, new Uint8Array(body));
+  } catch {
+    throw new CommentsError("STORE_CORRUPT", `${path} is not a saved document, or it is damaged`);
+  }
+  return ydoc;
+}
+
+function writeDurably(path: string, data: Buffer): void {
+  const handle = openSync(path, "wx");
+  try {
+    writeSync(handle, data);
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+}
+
+function syncDirectory(path: string): void {
+  try {
+    const handle = openSync(dirname(path), "r");
+    try {
+      fsyncSync(handle);
+    } finally {
+      closeSync(handle);
+    }
+  } catch {
+    /* some systems cannot sync a directory */
+  }
+}
+
+const identity = (path: string): string => {
+  const s = statSync(path);
+  return `${s.ino}:${s.size}:${s.mtimeMs}`;
+};
+
 /**
- * One file that holds a Yjs document. A write takes a lock file, loads the newest state, runs, and saves
- * with a rename, so two processes never lose each other's work. A lock left by a dead process is cleared.
+ * One file that holds a Yjs document, with a hash so damage is seen. A write takes a lock file, loads the
+ * newest state, runs, and saves with a rename. If the file changed while it ran, it runs again on the new
+ * state, so two writers do not lose each other's work even when a lock is wrongly cleared.
  */
 export class FileStore {
   readonly path: string;
@@ -32,82 +96,128 @@ export class FileStore {
 
   constructor(path: string, options: FileStoreOptions = {}) {
     this.path = resolve(path);
-    this.lockTimeoutMs = options.lockTimeoutMs ?? 5_000;
+    const timeout = options.lockTimeoutMs ?? 5_000;
+    if (!Number.isSafeInteger(timeout) || timeout < 0) throw new CommentsError("INVALID_INPUT", "lockTimeoutMs must be a whole number of milliseconds, 0 or more");
+    this.lockTimeoutMs = timeout;
   }
 
-  /** Create the file. `seed` fills the document before the first save. Refuses to overwrite. */
+  /** Create the file. `seed` fills the document before the first save. Refuses to overwrite, even when two run at once. */
   create(seed: (ydoc: Y.Doc) => void = () => undefined): void {
-    if (existsSync(this.path)) throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
     mkdirSync(dirname(this.path), { recursive: true });
     const ydoc = new Y.Doc();
     seed(ydoc);
-    this.save(ydoc, "wx");
+    const data = encode(ydoc);
+    if (data.length > MAX_FILE) throw new CommentsError("STORE_FULL", `the document is larger than ${MAX_FILE} bytes`);
+    const temporary = `${this.path}.tmp-${process.pid}-${globalThis.crypto.randomUUID()}`;
+    writeDurably(temporary, data);
+    try {
+      linkSync(temporary, this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
+      throw error;
+    } finally {
+      unlinkSync(temporary);
+    }
+    syncDirectory(this.path);
   }
 
-  private load(): Y.Doc {
+  private load(): { ydoc: Y.Doc; seen: string } {
     if (!existsSync(this.path)) throw new CommentsError("STORE_MISSING", `${this.path} does not exist; run init first`);
     if (statSync(this.path).size > MAX_FILE) throw new CommentsError("STORE_CORRUPT", `${this.path} is larger than ${MAX_FILE} bytes`);
-    const ydoc = new Y.Doc();
-    try {
-      Y.applyUpdate(ydoc, new Uint8Array(readFileSync(this.path)));
-    } catch {
-      throw new CommentsError("STORE_CORRUPT", `${this.path} is not a saved document`);
-    }
-    return ydoc;
-  }
-
-  private save(ydoc: Y.Doc, flag: "w" | "wx"): void {
-    const temporary = `${this.path}.tmp-${process.pid}-${globalThis.crypto.randomUUID()}`;
-    writeFileSync(temporary, Y.encodeStateAsUpdate(ydoc), { flag: "wx" });
-    if (flag === "wx" && existsSync(this.path)) {
-      unlinkSync(temporary);
-      throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
-    }
-    renameSync(temporary, this.path);
+    const seen = identity(this.path);
+    return { ydoc: decode(readFileSync(this.path), this.path), seen };
   }
 
   /** Read the newest saved state. Anything `fn` changes is not saved. */
   read<T>(fn: (ydoc: Y.Doc) => T): T {
-    return fn(this.load());
+    return fn(this.load().ydoc);
+  }
+
+  private acquire(lock: string): void {
+    const deadline = Date.now() + this.lockTimeoutMs;
+    for (;;) {
+      try {
+        const handle = openSync(lock, "wx");
+        try {
+          writeSync(handle, String(process.pid));
+        } finally {
+          closeSync(handle);
+        }
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new CommentsError("STORE_LOCKED", `${lock} cannot be created: ${(error as NodeJS.ErrnoException).code ?? "an error"}`);
+      }
+      if (this.clearStale(lock)) continue;
+      if (Date.now() >= deadline) {
+        throw new CommentsError("STORE_LOCKED", `${lock} is held by another process; remove it only if nothing uses ${this.path}`);
+      }
+      sleep(POLL_MS);
+    }
+  }
+
+  /**
+   * Clear a lock whose holder is dead, or an empty one older than a short time. The lock moves to a unique name
+   * first, so only one process clears it. If the moved lock is not the one we looked at, it goes back.
+   */
+  private clearStale(lock: string): boolean {
+    let held: string;
+    let age: number;
+    try {
+      held = readFileSync(lock, "utf8").trim();
+      age = Date.now() - statSync(lock).mtimeMs;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT";
+    }
+    const pid = Number(held);
+    const dead = /^\d{1,10}$/.test(held) && pid > 0 && !alive(pid);
+    if (!dead && !(held === "" && age > EMPTY_LOCK_MS)) return false;
+    const tomb = `${lock}.stale-${process.pid}-${globalThis.crypto.randomUUID()}`;
+    try {
+      renameSync(lock, tomb);
+    } catch {
+      return true;
+    }
+    try {
+      if (readFileSync(tomb, "utf8").trim() !== held) {
+        try {
+          linkSync(tomb, lock);
+        } catch {
+          /* another process took the name; nothing more to do */
+        }
+        return false;
+      }
+    } catch {
+      return true;
+    } finally {
+      try {
+        unlinkSync(tomb);
+      } catch {
+        /* already gone */
+      }
+    }
+    return true;
   }
 
   /** Lock, load the newest state, run `fn`, and save. When `fn` throws, nothing is saved. */
   write<T>(fn: (ydoc: Y.Doc) => T): T {
     const lock = `${this.path}.lock`;
-    const deadline = Date.now() + this.lockTimeoutMs;
-    for (;;) {
-      try {
-        const handle = openSync(lock, "wx");
-        writeSync(handle, String(process.pid));
-        closeSync(handle);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        let holder = 0;
-        try {
-          holder = Number(readFileSync(lock, "utf8").trim());
-        } catch {
-          continue;
-        }
-        if (Number.isSafeInteger(holder) && holder > 0 && !alive(holder)) {
-          try {
-            unlinkSync(lock);
-          } catch {
-            /* another process cleared it first */
-          }
-          continue;
-        }
-        if (Date.now() >= deadline) {
-          throw new CommentsError("STORE_LOCKED", `${lock} is held by another process; remove it only if nothing uses ${this.path}`);
-        }
-        sleep(POLL_MS);
-      }
-    }
+    this.acquire(lock);
     try {
-      const ydoc = this.load();
-      const result = fn(ydoc);
-      this.save(ydoc, "w");
-      return result;
+      for (let attempt = 1; ; attempt++) {
+        const { ydoc, seen } = this.load();
+        const result = fn(ydoc);
+        const data = encode(ydoc);
+        if (data.length > MAX_FILE) throw new CommentsError("STORE_FULL", `the document would pass ${MAX_FILE} bytes, so the change was not saved`);
+        if (identity(this.path) !== seen) {
+          if (attempt >= ATTEMPTS) throw new CommentsError("STORE_LOCKED", `${this.path} kept changing while it was saved`);
+          continue;
+        }
+        const temporary = `${this.path}.tmp-${process.pid}-${globalThis.crypto.randomUUID()}`;
+        writeDurably(temporary, data);
+        renameSync(temporary, this.path);
+        syncDirectory(this.path);
+        return result;
+      }
     } finally {
       try {
         unlinkSync(lock);
