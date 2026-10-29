@@ -629,5 +629,30 @@ describe("settle limits and the Yjs guard", () => {
     expect(code(() => stamp({ kind: "human", name: "cafe\u0301" }))).toBe("INVALID_AUTHOR");
     expect(stamp({ kind: "human", name: "caf\u00e9" }).name).toBe("caf\u00e9");
   });
+
+  test("settle stays fast when thousands of suggestions are decided", () => {
+    const r = replica({ apply: () => null, revert: () => undefined });
+    const decided = new Y.Doc();
+    const comments = new Comments(decided, { now: clock });
+    const suggestions = new Suggestions(comments, { apply: () => null, revert: () => undefined });
+    const map = decided.getMap<Y.Map<unknown>>("comments.suggestions");
+    const applied = decided.getMap("comments.suggestion-applied");
+    decided.transact(() => {
+      for (let i = 0; i < 3_000; i++) {
+        const id = `s${i}`;
+        const fields = new Y.Map<unknown>();
+        map.set(id, fields);
+        fields.set("anchor", cellAnchor);
+        fields.set("change", {});
+        fields.set("author", { kind: "agent", name: "scribe" });
+        fields.set("createdAt", "2026-01-01T00:00:00.000Z");
+        applied.set(`${id}:1`, { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z", receipt: null });
+      }
+    });
+    const started = performance.now();
+    suggestions.settle();
+    expect(performance.now() - started).toBeLessThan(1_500);
+    expect(r.suggestions.list()).toEqual([]);
+  });
 });
 

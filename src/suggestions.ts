@@ -353,13 +353,14 @@ export class Suggestions {
    */
   settle(): void {
     const groups = this.index(this.applied);
+    const indexes = { applied: groups, rejected: this.index(this.rejected) };
     this.failures = this.failures.filter((f) => f.reason.startsWith("apply failed") || f.reason.startsWith("a duplicate application has no receipt"));
     this.ydoc.transact(() => {
       for (const [id, entries] of groups) {
-        if (!ID.test(id) || !this.map.has(id)) continue;
+        if (entries.length < 2 || !ID.test(id) || !this.map.has(id)) continue;
         let s: Suggestion;
         try {
-          s = this.read(id, this.map.get(id));
+          s = this.read(id, this.map.get(id), indexes);
         } catch {
           continue;
         }

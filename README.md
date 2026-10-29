@@ -81,14 +81,20 @@ suggestions.accept(s.id, ada);
 - Accept checks that a text anchor still matches the document, then runs the edit and writes the
   record in one step. If `apply` throws before it edits, the suggestion stays pending. If it edits and
   then fails, the decision is recorded without a receipt, and `problems()` reports it. A host that cannot undo a double apply must say `idempotent: true`.
+- Every replica of a document must use the same host mode: the same `revert`, or the same `idempotent`
+  flag. A mix can leave a duplicate edit in the document.
+- `problems()` entries about an edit that failed after it landed, or a duplicate with no receipt, live in
+  memory on the replica that saw them. Other replicas and a reload do not show them.
+- A decision by an agent with the accept scope is final for everyone, including people.
 - An accept on a replica that has not yet seen a reject wins, even when a person made the reject long before.
   The window is any time the replicas were apart. An agent with the scope can override a person this way.
   A host that wants the person to win can accept only while its replica is in sync.
 - Two replicas that accept before they meet each apply the edit. After the merge, the application of
   the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
   accepted.
-- A receipt is stored data. A peer that can write comment data can choose one. Check it in `revert`
-  against the `anchor` it gets before you use it. A record with no receipt (an `apply` that edited and
+- A receipt is stored data. A peer that can write comment data can choose one, and can rewrite the
+  `anchor` to match. Check the receipt in `revert` before you use it. The sync layer's write control is
+  the real protection. A record with no receipt (an `apply` that edited and
   then failed) always stays, and the other application is undone. If two records have none, the extra
   edit cannot be undone. `problems()` reports it. With `idempotent: true`, a duplicate is never undone.
 - `apply` and `revert` must be synchronous, and must edit only the Yjs document. `accept` cannot run
