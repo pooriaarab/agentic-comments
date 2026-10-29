@@ -6,14 +6,14 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ### Fixed
 
-- `agentic-comments mcp --help`, `-h`, `--version`, `-V`, and `-v` print and exit 0 before the server starts. They used to exit 2.
+- `agentic-comments mcp --help`, `-h`, `--version`, `-V`, and `-v` print and exit 0 before the server starts. They used to exit 2. The `agentic-comments-mcp` bin answers `-V` too. It used to start the server.
 - The MCP server names `AGENTIC_COMMENTS_AS` in its startup error when no principal is set.
 - The `zod` dependency moves from zod 3 to `^4.6.7`. Zod below 4.6.6 can exhaust memory on oversized constrained collections (GHSA-mrhx-c7xc-m3w5). The MCP tool schemas use zod 4.
 - The publish workflow runs one publish at a time per ref, so two runs cannot both publish the same version.
 
 ### Changed
 
-- The `agentic-identity` dependency is `^0.8.0`, the current release. Below 1.0, `^0.8.0` does not accept 0.7.x, so a host that pins `agentic-identity@0.7.x` gets a second copy of it. The exported names are the same in both releases.
+- The `agentic-identity` dependency is `^0.8.0`, the current release. Below 1.0, `^0.8.0` does not accept 0.7.x, so a host that pins `agentic-identity@0.7.x` gets a second copy of it. The exported names are the same in both releases. A host that passes its own `Store` should upgrade to `^0.8.0`, so that the conflict check recognizes its errors.
 - `zod` is not part of the public API. Its move from zod 3 to 4 changes no exported type.
 
 ## 0.6.0
