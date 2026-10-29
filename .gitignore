@@ -11,4 +11,7 @@ comments.ydoc*
 *.ydoc.lock.stale-*
 .dev.vars
 .dev.vars.*
+public/
+test-results/
+playwright-report/
 .wrangler/

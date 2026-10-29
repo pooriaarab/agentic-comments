@@ -1,0 +1,3 @@
+body { margin: 0; background: var(--agd-color-bg); }
+.demo { padding-block: var(--agd-space-16); }
+.demo__who { max-width: 44rem; margin: 0 auto var(--agd-space-8); padding-inline: var(--agd-space-16); }

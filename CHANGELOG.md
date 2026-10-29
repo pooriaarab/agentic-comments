@@ -2,6 +2,13 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.7.0
+
+### Added
+
+- `agentic-comments/ui`: a React comments panel (`CommentsPanel`) with a thread list, quote, reply box, resolve and reopen, an agent or person mark on every message, and Accept and Reject buttons for suggestions. An agent never gets either button for its own suggestion. `mayDecide` and `holds` export the same rule. The styles are in `agentic-comments/ui.css`. `react` and `react-dom` are optional peer dependencies. The package depends on `agentic-design` `^0.5.0`.
+- A demo page for the panel on the demo Worker, and browser tests (`npm run test:ui`) with an axe check for WCAG 2.2 AA at desktop and 390px.
+
 ## 0.6.1
 
 ### Fixed

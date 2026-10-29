@@ -78,18 +78,18 @@ describe("createClient against the Worker handler", () => {
     const { as } = setup();
     const ada = as(ADA);
     await ada.createDocument({ id: "d1", text: "abc" });
-    const cases: [Promise<unknown>, number, string][] = [
-      [as("x".repeat(40)).me(), 401, "UNAUTHENTICATED"],
-      [ada.getDocument("nope"), 404, "NO_DOCUMENT"],
-      [ada.getThread("d1", "zzz"), 404, "NO_THREAD"],
-      [ada.createDocument({ id: "d1" }), 409, "DOCUMENT_EXISTS"],
-      [ada.addThread("d1", { anchor: { type: "text", quote: "absent" }, body: "x" }), 400, "INVALID_ANCHOR"],
-      [ada.getDocument("BAD ID"), 400, "INVALID_INPUT"],
-      [as(SEER).addThread("d1", { anchor: { type: "cell", key: "A1" }, body: "x" }), 403, "FORBIDDEN"],
-      [as(BOT).createDocument({ id: "d2" }), 403, "FORBIDDEN"],
+    const cases: [() => Promise<unknown>, number, string][] = [
+      [() => as("x".repeat(40)).me(), 401, "UNAUTHENTICATED"],
+      [() => ada.getDocument("nope"), 404, "NO_DOCUMENT"],
+      [() => ada.getThread("d1", "zzz"), 404, "NO_THREAD"],
+      [() => ada.createDocument({ id: "d1" }), 409, "DOCUMENT_EXISTS"],
+      [() => ada.addThread("d1", { anchor: { type: "text", quote: "absent" }, body: "x" }), 400, "INVALID_ANCHOR"],
+      [() => ada.getDocument("BAD ID"), 400, "INVALID_INPUT"],
+      [() => as(SEER).addThread("d1", { anchor: { type: "cell", key: "A1" }, body: "x" }), 403, "FORBIDDEN"],
+      [() => as(BOT).createDocument({ id: "d2" }), 403, "FORBIDDEN"],
     ];
     for (const [call, status, code] of cases) {
-      const error = await refusal(call);
+      const error = await refusal(call());
       expect([error.status, error.code]).toEqual([status, code]);
     }
     const thread = await ada.addThread("d1", { anchor: { type: "cell", key: "A1" }, body: "x" });

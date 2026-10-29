@@ -1,0 +1,54 @@
+/* The comments panel. It uses the agentic-design tokens and its own agd-comments classes. */
+.agd-comments {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--agd-space-16);
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: var(--agd-space-16);
+  color: var(--agd-color-text);
+  font-family: var(--agd-font-family-sans);
+  font-size: var(--agd-font-size-md);
+  line-height: var(--agd-line-height-normal);
+}
+.agd-comments__top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--agd-space-8); }
+.agd-comments__title { margin: 0; font-size: var(--agd-font-size-xl); font-weight: var(--agd-font-weight-semibold); line-height: var(--agd-line-height-tight); }
+.agd-comments__me { display: flex; align-items: center; gap: var(--agd-space-8); margin: 0; color: var(--agd-color-text-muted); font-size: var(--agd-font-size-sm); }
+.agd-comments__section { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-12, 12px); }
+.agd-comments__heading { display: flex; align-items: center; gap: var(--agd-space-8); margin: 0; font-size: var(--agd-font-size-lg); font-weight: var(--agd-font-weight-semibold); }
+.agd-comments__count { min-width: 1.5rem; padding: 0 var(--agd-space-6); border-radius: var(--agd-radius-full); background: var(--agd-color-surface-sunken); color: var(--agd-color-text-muted); font-size: var(--agd-font-size-sm); font-weight: var(--agd-font-weight-medium); text-align: center; }
+.agd-comments__views { display: flex; flex-wrap: wrap; gap: var(--agd-space-8); }
+.agd-comments__list, .agd-comments__messages { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-12, 12px); margin: 0; padding: 0; list-style: none; }
+.agd-comments__thread { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-8); padding: var(--agd-space-16); border: 1px solid var(--agd-color-border); border-radius: var(--agd-radius-lg); background: var(--agd-color-surface); }
+.agd-comments__thread > article { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-8); }
+.agd-comments__item-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--agd-space-8); }
+.agd-comments__item-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--agd-space-8); margin: 0; font-size: var(--agd-font-size-md); font-weight: var(--agd-font-weight-semibold); overflow-wrap: anywhere; }
+.agd-comments__status { font-size: var(--agd-font-size-xs); }
+.agd-comments__status--resolved, .agd-comments__status--accepted { background: var(--agd-color-success-subtle); color: var(--agd-color-success-text); }
+.agd-comments__status--rejected { background: var(--agd-color-danger-subtle); color: var(--agd-color-danger-text); }
+.agd-comments__status--pending, .agd-comments__status--open { background: var(--agd-color-accent-subtle); color: var(--agd-color-accent-text); }
+.agd-comments__anchor { margin: 0; }
+.agd-comments__label { color: var(--agd-color-text-muted); font-size: var(--agd-font-size-xs); font-weight: var(--agd-font-weight-medium); letter-spacing: 0.04em; text-transform: uppercase; }
+.agd-comments__quote { margin: var(--agd-space-4) 0 0; padding: var(--agd-space-4) var(--agd-space-12, 12px); border-inline-start: 3px solid var(--agd-color-border-strong); background: var(--agd-color-surface-sunken); border-radius: var(--agd-radius-sm); overflow-wrap: anywhere; }
+.agd-comments__state { margin: 0; padding: var(--agd-space-8) var(--agd-space-12, 12px); border-radius: var(--agd-radius-md); background: var(--agd-color-warning-subtle); color: var(--agd-color-warning-text); font-size: var(--agd-font-size-sm); overflow-wrap: anywhere; }
+.agd-comments__message { display: grid; gap: var(--agd-space-4); padding-top: var(--agd-space-8); border-top: 1px solid var(--agd-color-border); }
+.agd-comments__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--agd-space-8); }
+.agd-comments__who { display: inline-flex; align-items: center; gap: var(--agd-space-8); }
+.agd-comments__name { font-weight: var(--agd-font-weight-semibold); overflow-wrap: anywhere; }
+.agd-comments__time { color: var(--agd-color-text-muted); font-size: var(--agd-font-size-sm); }
+.agd-comments__body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agd-comments__change { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-4); margin: 0; }
+.agd-comments__code { padding: var(--agd-space-4) var(--agd-space-8); border-radius: var(--agd-radius-sm); background: var(--agd-color-surface-sunken); font-family: var(--agd-font-family-mono); font-size: var(--agd-font-size-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.agd-comments__note, .agd-comments__empty { margin: 0; color: var(--agd-color-text-muted); font-size: var(--agd-font-size-sm); }
+.agd-comments__reply, .agd-comments__new { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--agd-space-8); }
+.agd-comments__new { padding: var(--agd-space-16); border: 1px solid var(--agd-color-border); border-radius: var(--agd-radius-lg); background: var(--agd-color-surface-raised); }
+.agd-comments__reply .agd-button, .agd-comments__new .agd-button { justify-self: start; }
+.agd-comments__actions { display: flex; flex-wrap: wrap; gap: var(--agd-space-8); }
+.agd-comments__error { margin: 0; padding: var(--agd-space-8) var(--agd-space-12, 12px); border: 1px solid var(--agd-color-danger); border-radius: var(--agd-radius-md); background: var(--agd-color-danger-subtle); color: var(--agd-color-danger-text); overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .agd-comments { padding: var(--agd-space-12, 12px); }
+  .agd-comments__thread { padding: var(--agd-space-12, 12px); }
+}
+/* On a narrow screen the badge wraps, so its words are never cut off. */
+.agd-comments .agd-agent-badge { flex-wrap: wrap; row-gap: 0; }
+.agd-comments .agd-agent-badge__label, .agd-comments .agd-agent-badge__meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }

@@ -25,3 +25,7 @@ jobs:
       - run: npm test
       - name: dev smoke
         run: node scripts/dev-smoke.mjs 8794 /health
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+        env:
+          WRANGLER_SEND_METRICS: "false"
