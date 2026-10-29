@@ -6,7 +6,7 @@ Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents
 
 - SDK: import { Comments, Suggestions, textAnchor } from "agentic-comments". The host calls stamp(); an agent never does.
 - Threads live on a Yjs document and merge across replicas.
-- The CLI and MCP server are not built yet.
+- CLI: agentic-comments <command>. MCP: agentic-comments mcp. Both use a local store file.
 
 ## Docs
 

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agentic-comments": {
+      "command": "node",
+      "args": [
+        "./dist/mcp-bin.js"
+      ],
+      "env": {
+        "AGENTIC_COMMENTS_FILE": "./comments.ydoc",
+        "AGENTIC_COMMENTS_AS": "agent_of_human:assistant"
+      }
+    }
+  }
+}

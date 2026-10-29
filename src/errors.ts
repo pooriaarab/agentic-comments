@@ -9,7 +9,13 @@ export type CommentsErrorCode =
   | "FORBIDDEN"
   | "ALREADY_DECIDED"
   | "APPLY_FAILED"
-  | "RELOCATE_FAILED";
+  | "RELOCATE_FAILED"
+  | "STORE_MISSING"
+  | "STORE_EXISTS"
+  | "STORE_CORRUPT"
+  | "STORE_LOCKED"
+  | "STORE_FULL"
+  | "USAGE";
 
 export class CommentsError extends Error {
   constructor(

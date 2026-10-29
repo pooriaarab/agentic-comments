@@ -25,7 +25,8 @@ Check `thread.anchorState`. An `orphaned` thread has lost its content. Read it, 
 Suggest a change with `suggestions.add({ anchor, change, summary }, actor)`. Accept needs a person or
 the `comments:accept` scope. You never accept or reject your own suggestion.
 
-The CLI and the MCP server are not built yet.
+Over MCP, call `list_threads`, `add_comment`, `reply_to_thread`, `resolve_thread`, `suggest_change`,
+`accept_suggestion`, and `reject_suggestion`. You never pass an author or a scope.
 
 ## Rules
 
