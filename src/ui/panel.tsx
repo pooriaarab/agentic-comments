@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Component, createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AgentBadge, Avatar, Button, Input, Textarea } from "agentic-design/react";
 import type { CommentsClient, Me } from "../client.js";
 import type { Anchor } from "../anchor.js";
@@ -18,6 +18,8 @@ export interface CommentsPanelProps {
   title?: string;
   /** Show the form that starts a thread on a quote. On by default. A page that makes its own anchors turns it off. */
   newThread?: boolean;
+  /** Name the person an agent acts for, when the host knows. The badge says "for unknown" without it. */
+  actingFor?: (author: Author) => string | undefined;
 }
 
 type View = "open" | "resolved" | "all";
@@ -29,11 +31,12 @@ const VIEWS: { id: View; label: string }[] = [
 ];
 
 interface Act {
-  (key: string, run: () => Promise<unknown>): Promise<void>;
+  /** `done` is announced when the call succeeds. `focus` names the heading that takes focus after it: the button that was pressed may be gone. */
+  (key: string, run: () => Promise<unknown>, done?: string, focus?: "threads" | "suggestions"): Promise<void>;
 }
 
 // The cards read the client, the document, the signed-in principal, and the write runner from here.
-const Ctx = createContext<{ client: PanelClient; docId: string; me: Me | undefined; busy: string | undefined; act: Act } | undefined>(undefined);
+const Ctx = createContext<{ client: PanelClient; docId: string; me: Me | undefined; busy: string | undefined; act: Act; actingFor?: (author: Author) => string | undefined } | undefined>(undefined);
 function useCtx() {
   const value = useContext(Ctx);
   if (!value) throw new Error("A panel card needs a CommentsPanel above it.");
@@ -53,6 +56,7 @@ function failure(error: unknown): string {
 
 /** Who wrote it. A person shows a name. An agent shows the agent badge, so the words say a machine made it. */
 function Who({ author, agentLabel }: { author: Author; agentLabel: string }) {
+  const { actingFor } = useContext(Ctx) ?? {};
   if (author.kind === "human") {
     return (
       <span className="agd-comments__who">
@@ -61,7 +65,7 @@ function Who({ author, agentLabel }: { author: Author; agentLabel: string }) {
       </span>
     );
   }
-  return <AgentBadge name={author.name} label={agentLabel} />;
+  return <AgentBadge name={author.name} label={agentLabel} actingFor={actingFor?.(author)} />;
 }
 
 function anchorLabel(anchor: Anchor): string {
@@ -135,10 +139,14 @@ function ThreadCard({ thread }: { thread: Thread }) {
     event.preventDefault();
     const body = draft.trim();
     if (!body) return;
-    void act(`${thread.id}:reply`, async () => {
-      await client.reply(docId, thread.id, { body });
-      setDraft("");
-    });
+    void act(
+      `${thread.id}:reply`,
+      async () => {
+        await client.reply(docId, thread.id, { body });
+        setDraft("");
+      },
+      "Reply sent.",
+    );
   };
   return (
     <li className="agd-comments__thread">
@@ -148,7 +156,7 @@ function ThreadCard({ thread }: { thread: Thread }) {
             {anchorLabel(thread.anchor)} <Status value={thread.status} />
           </h3>
           {mayComment && (
-            <Button size="sm" loading={busy === `${thread.id}:status`} onClick={() => void act(`${thread.id}:status`, () => (resolved ? client.reopen(docId, thread.id) : client.resolve(docId, thread.id)))}>
+            <Button size="sm" loading={busy === `${thread.id}:status`} onClick={() => void act(`${thread.id}:status`, () => (resolved ? client.reopen(docId, thread.id) : client.resolve(docId, thread.id)), resolved ? "Thread reopened." : "Thread resolved.", "threads")}>
               {resolved ? "Reopen" : "Resolve"}
               <span className="agd-sr-only"> thread on {anchorLabel(thread.anchor)}</span>
             </Button>
@@ -205,25 +213,39 @@ function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
       )}
       {pending && decision.allowed && (
         <div className="agd-comments__actions">
-          <Button variant="primary" size="sm" loading={busy === `${suggestion.id}:accept`} disabled={!usable} onClick={() => void act(`${suggestion.id}:accept`, () => client.accept(docId, suggestion.id))}>
+          <Button variant="primary" size="sm" loading={busy === `${suggestion.id}:accept`} disabled={!usable} onClick={() => void act(`${suggestion.id}:accept`, () => client.accept(docId, suggestion.id), "Suggestion accepted.", "suggestions")}>
             Accept<span className="agd-sr-only"> suggestion</span>
           </Button>
-          <Button size="sm" loading={busy === `${suggestion.id}:reject`} onClick={() => void act(`${suggestion.id}:reject`, () => client.reject(docId, suggestion.id))}>
+          <Button size="sm" loading={busy === `${suggestion.id}:reject`} onClick={() => void act(`${suggestion.id}:reject`, () => client.reject(docId, suggestion.id), "Suggestion rejected.", "suggestions")}>
             Reject<span className="agd-sr-only"> suggestion</span>
           </Button>
         </div>
       )}
-      {pending && decision.allowed && !usable && <p className="agd-comments__note">The anchored text changed or is gone. You can reject this suggestion, and you cannot accept it.</p>}
+      {pending && decision.allowed && !usable && (
+        <p className="agd-comments__note">
+          {suggestion.anchorState.state === "unknown" ? "The panel cannot tell if the anchored text is still there, so Accept is off. You can reject this suggestion." : "The anchored text changed or is gone. You can reject this suggestion, and you cannot accept it."}
+        </p>
+      )}
       {pending && !decision.allowed && decision.reason && <p className="agd-comments__note">{decision.reason}</p>}
     </li>
   );
 }
 
-function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
-  const id = useId();
+/** One bad item must not take the panel down. A host's own client can return data that the shape checks of `createClient` never saw. */
+class CardBoundary extends Component<{ children: ReactNode }, { bad: boolean }> {
+  state = { bad: false };
+  static getDerivedStateFromError() {
+    return { bad: true };
+  }
+  render() {
+    return this.state.bad ? <li className="agd-comments__thread agd-comments__note">This item has bad data, so the panel does not show it.</li> : this.props.children;
+  }
+}
+
+function Section({ id, title, count, children }: { id: string; title: string; count: number; children: ReactNode }) {
   return (
     <section className="agd-comments__section" aria-labelledby={id}>
-      <h2 className="agd-comments__heading" id={id}>
+      <h2 className="agd-comments__heading" id={id} tabIndex={-1}>
         {title} <span className="agd-comments__count">{count}</span>
       </h2>
       {children}
@@ -237,7 +259,9 @@ function Section({ title, count, children }: { title: string; count: number; chi
  * agent never decides its own suggestion. The server still checks every call, so a hidden button is a help and not a lock.
  * It needs the `agentic-design/styles.css` and `agentic-comments/ui.css` styles on the page.
  */
-export function CommentsPanel({ client, docId, title = "Comments", newThread = true }: CommentsPanelProps) {
+export function CommentsPanel({ client, docId, title = "Comments", newThread = true, actingFor }: CommentsPanelProps) {
+  const base = useId();
+  const [notice, setNotice] = useState("");
   const [me, setMe] = useState<Me>();
   const [threads, setThreads] = useState<Thread[]>();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -247,10 +271,13 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
   const [quote, setQuote] = useState("");
   const [body, setBody] = useState("");
   const alive = useRef(true);
+  // The run that is current. A read that began before the document or client changed must not set state.
+  const run = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = run.current;
     const [m, t, s] = await Promise.all([client.me(), client.listThreads(docId), client.listSuggestions(docId)]);
-    if (!alive.current) return;
+    if (!alive.current || mine !== run.current) return;
     setMe(m);
     setThreads(t);
     setSuggestions(s);
@@ -258,8 +285,10 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
 
   useEffect(() => {
     alive.current = true;
+    run.current += 1;
     setThreads(undefined);
     setError(undefined);
+    setNotice("");
     load().catch((e) => alive.current && setError(failure(e)));
     return () => {
       alive.current = false;
@@ -267,12 +296,18 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
   }, [load]);
 
   // Run one write, then read again. A failure shows as it is, and the panel never retries with other input.
-  const act: Act = async (key, run) => {
+  const act: Act = async (key, call, done, focus) => {
     setBusy(key);
     setError(undefined);
+    setNotice("");
     try {
-      await run();
+      await call();
       await load();
+      if (alive.current) {
+        if (done) setNotice(done);
+        // The pressed button may be gone now, and focus would drop to the page. Put it on the heading of its list.
+        if (focus) requestAnimationFrame(() => document.getElementById(`${base}-${focus}`)?.focus());
+      }
     } catch (e) {
       if (alive.current) setError(failure(e));
       await load().catch(() => undefined); // show what the server holds now. The error stays.
@@ -290,7 +325,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
       await client.addThread(docId, { anchor: { type: "text", quote: q }, body: b });
       setQuote("");
       setBody("");
-    });
+    }, "Thread added.");
   };
 
   const shown = (threads ?? []).filter((t) => view === "all" || t.status === view);
@@ -298,7 +333,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
   const decided = suggestions.filter((s) => s.status !== "pending");
 
   return (
-    <Ctx.Provider value={{ client, docId, me, busy, act }}>
+    <Ctx.Provider value={{ client, docId, me, busy, act, actingFor }}>
       <div className="agd-comments">
         <header className="agd-comments__top">
           <h1 className="agd-comments__title">{title}</h1>
@@ -314,7 +349,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
           </p>
         )}
         <p className="agd-sr-only" role="status">
-          {threads === undefined && !error ? "Loading comments" : ""}
+          {threads === undefined && !error ? "Loading comments" : notice}
         </p>
         {newThread && holds(me, "comment") && (
           <form className="agd-comments__new" onSubmit={start}>
@@ -325,7 +360,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
             </Button>
           </form>
         )}
-        <Section title="Threads" count={shown.length}>
+        <Section id={`${base}-threads`} title="Threads" count={shown.length}>
           <div className="agd-comments__views" role="group" aria-label="Show threads">
             {VIEWS.map((v) => (
               <Button key={v.id} size="sm" variant={view === v.id ? "primary" : "secondary"} aria-pressed={view === v.id} onClick={() => setView(v.id)}>
@@ -338,18 +373,22 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
           ) : (
             <ul className="agd-comments__list">
               {shown.map((t) => (
-                <ThreadCard key={t.id} thread={t} />
+                <CardBoundary key={t.id}>
+                  <ThreadCard thread={t} />
+                </CardBoundary>
               ))}
             </ul>
           )}
         </Section>
-        <Section title="Suggestions" count={pending.length}>
+        <Section id={`${base}-suggestions`} title="Suggestions" count={pending.length}>
           {suggestions.length === 0 ? (
             <p className="agd-comments__empty">No suggestions.</p>
           ) : (
             <ul className="agd-comments__list">
               {[...pending, ...decided].map((s) => (
-                <SuggestionCard key={s.id} suggestion={s} />
+                <CardBoundary key={s.id}>
+                  <SuggestionCard suggestion={s} />
+                </CardBoundary>
               ))}
             </ul>
           )}

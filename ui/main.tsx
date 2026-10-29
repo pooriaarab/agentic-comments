@@ -9,15 +9,18 @@ import "./demo.css";
 import { CommentsPanel, createClient, type PanelClient } from "../src/ui/index.js";
 import { PRINCIPALS, createStore, memoryClient } from "./memory-client.js";
 
+// Read once, at load: the token leaves the address bar, so a second read would find nothing.
+const live = (() => {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get("token");
+  if (token) history.replaceState(null, "", location.pathname + location.search);
+  return token ? { token, doc: params.get("doc") ?? "demo" } : undefined;
+})();
+
 function Demo() {
   const [who, setWho] = useState("maya");
   const store = useMemo(createStore, []);
-  const live = useMemo(() => {
-    const params = new URLSearchParams(location.hash.slice(1));
-    const token = params.get("token");
-    return token ? { token, doc: params.get("doc") ?? "demo" } : undefined;
-  }, []);
-  const client: PanelClient = useMemo(() => (live ? createClient({ baseUrl: location.origin, token: live.token }) : memoryClient(store, PRINCIPALS[who]!)), [live, store, who]);
+  const client: PanelClient = useMemo(() => (live ? createClient({ baseUrl: location.origin, token: live.token }) : memoryClient(store, PRINCIPALS[who]!)), [store, who]);
   return (
     <>
       <a className="agd-skip-link" href="#main">Skip to the comments</a>

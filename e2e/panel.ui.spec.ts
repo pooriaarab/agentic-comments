@@ -48,6 +48,15 @@ test("a person reads a thread, sees the agent mark, replies, resolves, and reope
   await expect(page.getByLabel("Reply").first()).toBeVisible();
 });
 
+test("a decision is announced, focus moves to the list heading, and the token leaves the address bar", async ({ page, request }) => {
+  const { doc } = await seed(request);
+  await open(page, ADA, doc);
+  expect(page.url()).not.toContain("token");
+  await suggestionCard(page, "The people page says 43.").getByRole("button", { name: "Reject suggestion" }).click();
+  await expect(page.getByRole("status")).toHaveText("Suggestion rejected.");
+  await expect(page.getByRole("heading", { level: 2, name: /^Suggestions/ })).toBeFocused();
+});
+
 test("a person starts a thread on a quote, and a bad quote shows the error", async ({ page, request }) => {
   const { doc } = await seed(request);
   await open(page, ADA, doc);
@@ -97,7 +106,7 @@ test("an agent with no accept right sees no decision buttons", async ({ page, re
   const { doc } = await seed(request);
   await open(page, SCRIBE, doc);
   await expect(page.getByRole("button", { name: /Accept|Reject/ })).toHaveCount(0);
-  await expect(page.getByText("Your access cannot accept or reject suggestions.").first()).toBeVisible();
+  await expect(page.getByText("An agent needs the accept right to decide a suggestion. A person can.").first()).toBeVisible();
 });
 
 test("a failed call shows its code, and the panel does not retry", async ({ page, request }) => {
@@ -138,7 +147,7 @@ test("the page fits 390px with no sideways scroll, and passes axe there", async 
   const culprits = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > 390.5).map((e) => `${e.tagName}.${e.className}`).slice(0, 5));
   expect(culprits).toEqual([]);
   expect(wide).toBeLessThanOrEqual(0);
-  const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+  const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
   expect(result.violations).toEqual([]);
 });
 
@@ -152,7 +161,7 @@ test("the demo page works with no token and follows the rule for each principal"
   await expect(suggestionCard(page, "Say which dates the quarter covers.").getByRole("button", { name: "Accept suggestion" })).toBeVisible();
   await page.getByLabel("Signed in as").selectOption("copy-editor");
   await expect(page.getByRole("button", { name: /Accept|Reject/ })).toHaveCount(0);
-  const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+  const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
   expect(result.violations).toEqual([]);
 });
 
