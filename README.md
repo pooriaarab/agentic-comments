@@ -466,6 +466,22 @@ const stop = notifications.subscribe(async (event) => {
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
   and `. _ -`. A longer handle in a body is refused.
 
+## Run locally
+
+```sh
+git clone https://github.com/pooriaarab/agentic-comments
+cd agentic-comments
+npm install && npm run dev
+```
+
+You can also use `bun install && bun run dev`. The `dev` script calls npm, so npm must be installed. The scripts need macOS, Linux, or WSL. The `dev` script builds the package, then starts `wrangler dev` on <http://localhost:8794>. Wrangler keeps a local D1 database. The `dev` script turns off Wrangler telemetry. Set `WRANGLER_SEND_METRICS=false` when you run other wrangler commands.
+
+```sh
+curl -i http://localhost:8794/health   # 200
+```
+
+`npm run dev:smoke` runs the same check by itself. It starts the dev server. It waits for `/health` to answer 200. It stops the server. CI runs it as the "dev smoke" step. To use another port, change `8794` in the `dev` and `dev:smoke` scripts.
+
 ## Develop
 
 ```sh

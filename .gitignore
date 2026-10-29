@@ -9,6 +9,8 @@ comments.ydoc*
 *.ydoc.lock
 *.ydoc.tmp-*
 *.ydoc.lock.stale-*
+.dev.vars
+.dev.vars.*
 public/
 test-results/
 playwright-report/

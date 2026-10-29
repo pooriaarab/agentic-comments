@@ -23,6 +23,8 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
+      - name: dev smoke
+        run: node scripts/dev-smoke.mjs 8794 /health
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
         env:

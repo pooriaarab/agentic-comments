@@ -76,6 +76,8 @@
     "test": "vitest run",
     "deploy:demo": "npm run build && npm run build:ui && WRANGLER_SEND_METRICS=false wrangler deploy --config wrangler.demo.jsonc",
     "clean": "rm -rf dist",
+    "dev": "npm run build && WRANGLER_SEND_METRICS=false wrangler dev --port 8794",
+    "dev:smoke": "npm run build && node scripts/dev-smoke.mjs 8794 /health",
     "prepack": "npm run build",
     "ci:local": "npm run build && npm run typecheck && npm test && npm run test:ui",
     "build:ui": "node scripts/build-ui.mjs",
