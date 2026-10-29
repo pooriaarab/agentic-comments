@@ -251,28 +251,41 @@ export class Suggestions {
   }
 
   /**
-   * Give every suggestion a person wrote a tombstone author and drop its summary, and give every decision
-   * they made a tombstone decider. The change stays, because an accepted change is already part of the
-   * content. Returns how many suggestions and decisions it changed.
+   * Give every suggestion a person wrote a tombstone author and drop its summary. An accepted one keeps its
+   * change, because that change is already part of the content. A pending or rejected one loses its change, and
+   * can no longer be accepted. A decision they made gets a tombstone decider. A decision that a read refuses (a
+   * principal that decided its own work) is deleted, so erase never turns it into a valid one. Returns how many
+   * suggestions and decisions it changed.
    */
   erasePerson(person: string, actor: Actor): { suggestions: number; decisions: number } {
     const { match } = this.comments.checkPerson(person, actor);
     const out = { suggestions: 0, decisions: 0 };
+    const authors = new Map<string, Author>();
+    for (const [id, fields] of this.map.entries()) {
+      const author = fields instanceof Y.Map ? readAuthor(fields.get("author")) : undefined;
+      if (author) authors.set(id, author);
+    }
+    const status = new Map(this.list().map((s) => [s.id, s.status]));
     this.ydoc.transact(() => {
-      for (const fields of this.map.values()) {
-        const author = fields instanceof Y.Map ? readAuthor(fields.get("author")) : undefined;
-        if (!author || !match(author)) continue;
-        fields.set("author", { kind: author.kind, name: ERASED_NAME });
-        fields.delete("summary");
-        out.suggestions++;
-      }
       for (const map of [this.applied, this.rejected]) {
         for (const [key, raw] of [...map.entries()]) {
           const by = readAuthor((raw as { by?: unknown } | null)?.by);
-          if (!by || !match(by)) continue;
-          map.set(key, { ...(raw as object), by: { kind: by.kind, name: ERASED_NAME } });
-          out.decisions++;
+          const author = authors.get(key.slice(0, key.lastIndexOf(":")));
+          if (!by || !author || !(match(by) || match(author))) continue;
+          if (decidesOwn(author, by)) map.delete(key);
+          else if (match(by)) {
+            map.set(key, { ...(raw as object), by: { kind: by.kind, name: ERASED_NAME } });
+            out.decisions++;
+          }
         }
+      }
+      for (const [id, author] of authors) {
+        if (!match(author)) continue;
+        const fields = this.map.get(id) as Fields;
+        fields.set("author", { kind: author.kind, name: ERASED_NAME });
+        fields.delete("summary");
+        if (status.get(id) !== "accepted") fields.set("change", null);
+        out.suggestions++;
       }
     });
     return out;
@@ -306,6 +319,7 @@ export class Suggestions {
   private mayDecide(who: Actor, s: Suggestion, verb: string): void {
     const ok = !decidesOwn(s.author, who) && (who.kind === "human" || who.scopes.includes(ACCEPT_SCOPE));
     if (!ok) throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${verb} this suggestion: a signed-in person, or a principal with the ${ACCEPT_SCOPE} scope that did not write it, can`);
+    if (verb === "accept" && s.author.name === ERASED_NAME && s.status !== "accepted") throw new CommentsError("FORBIDDEN", "an erased suggestion has no change left and cannot be accepted");
   }
 
   /**

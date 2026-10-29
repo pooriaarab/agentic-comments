@@ -357,3 +357,53 @@ describe("review findings", () => {
     n.close();
   });
 });
+
+describe("second review findings", () => {
+  const host: SuggestionHost = { apply: () => ({}), idempotent: true };
+  const bot2 = stamp({ kind: "agent", name: "bot" });
+
+  test("erase never turns a refused self-decision into a valid one, and an erased pending suggestion cannot be accepted", () => {
+    const doc = new Y.Doc();
+    const s = new Suggestions(make(doc), host);
+    const one = s.add({ anchor: cell, change: { value: 1 }, summary: "mine" }, bot2);
+    doc.getMap("comments.suggestion-rejected").set(`${one.id}:7`, { by: { kind: "user_token", name: "bot" }, at: "2026-01-01T00:00:00.000Z" });
+    expect(s.get(one.id).status).toBe("pending");
+    s.erasePerson("bot", bot2);
+    s.erasePerson("bot", stamp({ kind: "user_token", name: "bot" }));
+    expect(s.get(one.id)).toMatchObject({ status: "pending", change: null, author: { name: "erased" } });
+    expect(code(() => s.accept(one.id, ada))).toBe("FORBIDDEN");
+  });
+
+  test("an accepted suggestion keeps its change after erase", () => {
+    const s = new Suggestions(make(), host);
+    const one = s.add({ anchor: cell, change: { value: 5 } }, bob);
+    s.accept(one.id, ada);
+    s.erasePerson("bob", bob);
+    expect(s.get(one.id)).toMatchObject({ status: "accepted", change: { value: 5 }, author: { name: "erased" } });
+  });
+
+  test("export counts a status record and an edit stamp in a thread it cannot read", () => {
+    const doc = new Y.Doc();
+    const c = make(doc);
+    const t = c.add({ anchor: cell, body: "bob wrote" }, bob);
+    c.resolve(t.id, ada);
+    const fields = doc.getMap("comments.threads").get(t.id) as Y.Map<unknown>;
+    fields.set("anchor", { type: "nonsense" });
+    expect(c.exportPerson("ada", ada)).toMatchObject({ threads: [], unread: 1 });
+    expect(c.erasePerson("ada", ada)).toMatchObject({ statuses: 1 });
+    expect(c.exportPerson("ada", ada).unread).toBe(0);
+  });
+
+  test("an edit and a delete made at once keep the edit", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const ca = make(a);
+    const t = ca.add({ anchor: cell, body: "one" }, ada);
+    const r = ca.reply(t.id, { body: "two" }, bob);
+    sync(a, b);
+    ca.deleteMessage(t.id, r.id, admin);
+    make(b).editMessage(t.id, r.id, { body: "two, edited" }, bob);
+    sync(a, b);
+    expect(ca.get(t.id).messages.map((m) => m.body)).toEqual(["one", "two, edited"]);
+  });
+});

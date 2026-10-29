@@ -531,6 +531,7 @@ export class Comments {
       const messages = thread.messages.filter((m) => match(m.author));
       shownCount += messages.length;
       const status = match(thread.statusBy);
+      if (status) shownCount++;
       for (const m of thread.messages) if (m.editedBy && match(m.editedBy) && !match(m.author)) edits.push({ threadId: thread.id, messageId: m.id, at: m.editedAt as string });
       if (messages.length === 0 && !status) continue;
       threads.push({
@@ -540,9 +541,17 @@ export class Comments {
         ...(status ? { statusChange: { status: thread.status, at: thread.statusAt, by: copy(thread.statusBy) } } : {}),
       });
     }
+    // Count every stored place that erase would rewrite, and subtract what this export shows.
     let found = 0;
-    for (const { list } of this.stored()) for (const raw of list.toArray()) if (match(readAuthor((raw as { author?: unknown } | null)?.author) ?? { kind: "agent", name: "" })) found++;
-    return { person: name, exportedAt: this.time(), threads, edits, unread: Math.max(0, found - shownCount) };
+    const named = (value: unknown) => {
+      const author = readAuthor(value);
+      return author !== undefined && match(author);
+    };
+    for (const { fields, list } of this.stored()) {
+      for (const raw of list.toArray() as ({ author?: unknown; editedBy?: unknown } | null)[]) if (named(raw?.author) || named(raw?.editedBy)) found++;
+      if (named((fields.get("state") as { by?: unknown } | undefined)?.by)) found++;
+    }
+    return { person: name, exportedAt: this.time(), threads, edits, unread: Math.max(0, found - shownCount - edits.length) };
   }
 
   /**
