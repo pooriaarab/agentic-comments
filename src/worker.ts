@@ -203,10 +203,10 @@ export class CommentsDocs {
 
   /**
    * For the account plug-in: runs `fn` on each stored document, with its `Comments` and `Suggestions`. With `save`,
-   * each document runs in one transaction and the state `fn` changed is written back there, so a throw leaves it as it was.
+   * each document runs in one transaction and the state is written back there, unless `fn` returns `false`. A throw leaves it as it was.
    * A damaged document stops the run with CORRUPT.
    */
-  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void> {
+  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => boolean | void, save: boolean): Promise<void> {
     const open = (id: string, row: { state?: unknown } | null) => {
       const ydoc = this.load(row, id);
       ydoc.getText(TEXT_ROOT);
@@ -222,7 +222,7 @@ export class CommentsDocs {
       await this.store.transaction(async (tx) => {
         const row = (await tx.get(DOCS, id)) as { state?: unknown; createdBy?: unknown; createdAt?: unknown } | null;
         const { ydoc, doc } = open(id, row);
-        fn(doc);
+        if (fn(doc) === false) return;
         const state = Y.encodeStateAsUpdate(ydoc);
         if (state.length > MAX_STATE) throw new CommentsError("STORE_FULL", `document "${id}" would pass ${MAX_STATE} bytes of state`);
         await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
@@ -230,23 +230,26 @@ export class CommentsDocs {
     }
   }
 
-  private async scan(author: Author, each: (id: string, row: { state?: unknown; createdBy?: unknown; createdAt?: unknown }) => Promise<void>): Promise<void> {
+  private async scan(author: Author, each: (id: string, row: { state?: unknown; createdBy?: unknown; createdAt?: unknown }) => Promise<void>, unread?: string[]): Promise<void> {
     let cursor: string | undefined;
     do {
       const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
       for (const { id, data } of page.items) {
-        const by = readAuthor((data as { createdBy?: unknown } | null)?.createdBy);
-        if (by && by.kind === author.kind && by.name === author.name) await each(id, data as never);
+        const raw = (data as { createdBy?: unknown } | null)?.createdBy;
+        const by = readAuthor(raw);
+        if (!by && raw !== null && raw !== undefined) unread?.push(id);
+        else if (by && by.kind === author.kind && by.name === author.name) await each(id, data as never);
       }
       cursor = page.nextCursor;
     } while (cursor);
   }
 
   /** The documents this subject created: the creator is kept on the row. For the account plug-in. */
-  async exportCreated(author: Author): Promise<{ documentId: string; createdAt: unknown }[]> {
-    const out: { documentId: string; createdAt: unknown }[] = [];
-    await this.scan(author, async (id, row) => void out.push({ documentId: id, createdAt: row.createdAt ?? null }));
-    return out;
+  async exportCreated(author: Author): Promise<{ documents: { documentId: string; createdAt: unknown }[]; unread: string[] }> {
+    const documents: { documentId: string; createdAt: unknown }[] = [];
+    const unread: string[] = [];
+    await this.scan(author, async (id, row) => void documents.push({ documentId: id, createdAt: row.createdAt ?? null }), unread);
+    return { documents, unread };
   }
 
   /** Give the creator of each document this subject made the tombstone name. Returns how many. A repeat finds none. */

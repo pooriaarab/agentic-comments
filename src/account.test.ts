@@ -127,6 +127,7 @@ describe("commentsAccount", () => {
     const deps = { documents: [], actor: ada, worker: docs };
     const out = await commentsAccount.exportAccount(ada, deps);
     expect(out.documents).toMatchObject([{ documentId: "mine" }]);
+    expect(out.unread).toEqual([]);
     expect(out.messages).toMatchObject([{ documentId: "theirs", body: "ada on bob doc" }]);
     expect(JSON.stringify(out)).not.toContain("bob own");
     expect(await commentsAccount.eraseAccount(ada, deps)).toMatchObject({ messages: 1, documents: 1 });
@@ -150,5 +151,17 @@ describe("commentsAccount", () => {
     expect(failure).toBeInstanceOf(CommentsError);
     expect(failure.code).toBe("CORRUPT");
     expect((await store.get("comments_docs", "ok"))?.createdBy).toEqual({ kind: "human", name: "ada" });
+  });
+
+  test("a creator that cannot be read shows in unread, and a document that two lists name is refused", async () => {
+    const store = createMemoryStore({ region: "unknown" });
+    const docs = new CommentsDocs(store);
+    await docs.create("ok", "abc", ada);
+    await store.put("comments_docs", "odd", { state: (await store.get("comments_docs", "ok"))?.state as never, createdBy: { kind: "human", name: "ada " }, createdAt: 1 });
+    const out = await commentsAccount.exportAccount(ada, { documents: [], actor: ada, worker: docs });
+    expect(out.unread).toEqual([{ documentId: "odd", count: 1 }]);
+    let twice: CommentsAccountDocument | undefined;
+    await docs.eachAccountDocument((d) => void (d.id === "ok" && (twice = d)), false);
+    expect(await code(() => commentsAccount.exportAccount(ada, { documents: [twice!], actor: ada, worker: docs }))).toBe("INVALID_INPUT");
   });
 });

@@ -1,5 +1,6 @@
 // The package's side of the account contract: a host calls `exportAccount` and `eraseAccount`
 // and never reads the storage layout. The shape matches the account plug-ins of the other packages.
+import { StoreConflictError } from "agentic-identity";
 import { CommentsError } from "./errors.js";
 import { Actor, assertActor, readAuthor, type Author } from "./principal.js";
 import { Suggestions } from "./suggestions.js";
@@ -16,9 +17,10 @@ export interface CommentsAccountDocument {
 
 /** What `CommentsDocs` offers the plug-in. */
 export interface AccountWorker {
-  /** Runs `fn` on each stored document. With `save`, the state `fn` changed is written back in the same transaction. */
-  eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void>;
-  exportCreated(author: Author): Promise<{ documentId: string; createdAt: unknown }[]>;
+  /** Runs `fn` on each stored document. With `save`, the state is written back in the same transaction, unless `fn` returns `false`. */
+  eachAccountDocument(fn: (doc: CommentsAccountDocument) => boolean | void, save: boolean): Promise<void>;
+  /** The documents the subject created. `unread` names the rows whose creator cannot be read, so the export is not complete for them. */
+  exportCreated(author: Author): Promise<{ documents: { documentId: string; createdAt: unknown }[]; unread: string[] }>;
   eraseCreated(author: Author): Promise<number>;
 }
 
@@ -106,7 +108,8 @@ async function stopAt<T>(where: string, run: () => Promise<T> | T): Promise<T> {
   } catch (cause) {
     const known = cause instanceof CommentsError;
     const reason = cause instanceof Error ? cause.message : "unknown error";
-    throw new CommentsError(known ? cause.code : "CORRUPT", `erase stopped at ${where}: ${reason}`, { cause });
+    // A store that lost a race is not damaged data: the caller runs the erase again.
+    throw new CommentsError(known ? cause.code : cause instanceof StoreConflictError ? "CONFLICT" : "CORRUPT", `erase stopped at ${where}: ${reason}`, { cause });
   }
 }
 
@@ -125,15 +128,22 @@ export const commentsAccount: CommentsAccount = {
   async exportAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
     const out: Collected = { messages: [], statusChanges: [], edits: [], suggestions: [], decisions: [], documents: [], unread: [] };
+    const taken = new Set(documents.map((d) => d.id));
     for (const doc of documents) collect(doc, own, out);
     if (deps.worker) {
-      await deps.worker.eachAccountDocument((doc) => collect(doc, own, out), false);
-      out.documents.push(...(await deps.worker.exportCreated(own)));
+      await deps.worker.eachAccountDocument((doc) => {
+        if (taken.has(doc.id)) throw new CommentsError("INVALID_INPUT", "deps.worker holds a document that deps.documents also lists");
+        collect(doc, own, out);
+      }, false);
+      const created = await deps.worker.exportCreated(own);
+      out.documents.push(...created.documents);
+      for (const documentId of created.unread) out.unread.push({ documentId, count: 1 });
     }
     return plain(out);
   },
   async eraseAccount(subject, deps) {
     const { documents, own } = check(subject, deps);
+    const taken = new Set(documents.map((d) => d.id));
     const counts: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 };
     for (const doc of documents) await stopAt(`document ${shown(doc.id)}`, () => wipe(doc, own, counts));
     if (deps.worker) {
@@ -142,9 +152,12 @@ export const commentsAccount: CommentsAccount = {
       const each = new Map<string, Counts>();
       await stopAt("a worker document", () =>
         deps.worker!.eachAccountDocument((doc) => {
+          if (taken.has(doc.id)) throw new CommentsError("INVALID_INPUT", "deps.worker holds a document that deps.documents also lists");
           const one: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 };
           wipe(doc, own, one);
           each.set(doc.id, one);
+          // A document with nothing of the subject is not written back.
+          return Object.values(one).some((n) => n > 0);
         }, true),
       );
       for (const c of each.values()) for (const k of Object.keys(counts) as (keyof Counts)[]) counts[k] += c[k];

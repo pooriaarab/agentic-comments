@@ -96,13 +96,15 @@ document is `{ id, comments, suggestions }`. The actor is made with `stamp()` an
 The package keeps no grants or audit rows. A host that runs the HTTP worker passes `worker: docs` (the
 `CommentsDocs` of the worker). Then the run also covers every stored document: the subject's messages and
 suggestions in it, and the creator that the worker keeps on each row, listed under `documents` and given the
-tombstone name on erase. Each stored document is erased in one transaction. Without `worker`, that data stays.
-A run covers only the subject's own kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions
-of the subject inside other people's messages are neither exported nor erased. Records can name other people,
-such as the moderator in `editedBy` or the person in `decidedBy`. A record in `unread` means the export is not
-complete: the store holds entries of the subject that a read cannot show. A missing `documents` list is an
-error, not an empty run. Erase goes document by document. If one fails, the error names it, the earlier
-documents stay erased, and a repeat counts only what is left. The counts of a failed run are lost.
+tombstone name on erase. Each stored document is erased in one transaction. A row whose creator cannot be read
+shows in `unread`. A stored document that `documents` also lists is refused. A store that loses a race gives
+`CONFLICT`: run the erase again. Without `worker`, that data stays. A run covers only the subject's own kind:
+`human:ada` does not reach `agent_of_human:ada`. Names and mentions of the subject inside other people's
+messages are neither exported nor erased. Records can name other people, such as the moderator in `editedBy`
+or the person in `decidedBy`. A record in `unread` means the export is not complete: the store holds entries
+of the subject that a read cannot show. A missing `documents` list is an error, not an empty run. Erase goes
+document by document. If one fails, the error names it, the earlier documents stay erased, and a repeat counts
+only what is left. The counts of a failed run are lost.
 
 ## Anchors for plain text
 
