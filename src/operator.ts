@@ -10,7 +10,10 @@ import { PRINCIPAL_KINDS, stamp, type Actor } from "./principal.js";
 export function operatorActor(as: string | undefined, scopes: string | undefined): Actor {
   const value = as?.trim();
   const cut = value === undefined ? -1 : value.indexOf(":");
-  if (value === undefined || cut < 1 || cut === value.length - 1) {
+  if (value === undefined || value === "") {
+    throw new CommentsError("INVALID_AUTHOR", `no principal: set AGENTIC_COMMENTS_AS=kind:name (or pass --as), for example agent_of_human:scribe. Kinds: ${PRINCIPAL_KINDS.join(", ")}`);
+  }
+  if (cut < 1 || cut === value.length - 1) {
     throw new CommentsError("INVALID_AUTHOR", `set the principal as kind:name, for example human:ada. Kinds: ${PRINCIPAL_KINDS.join(", ")}`);
   }
   const list = scopes === undefined || scopes.trim() === "" ? [] : scopes.split(",").map((s) => s.trim());
