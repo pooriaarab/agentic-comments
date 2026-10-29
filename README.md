@@ -220,8 +220,8 @@ npx agentic-comments accept <id>
   cannot pick its own kind or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
   `reopen_thread`, `relocate_thread`, `edit_message`, `delete_message`, `delete_thread`, `export_person`,
   `erase_person`, `list_suggestions`, `suggest_change`, `accept_suggestion`, `reject_suggestion`.
-  Another person's message, thread, or data needs `comments:moderate` in `AGENTIC_COMMENTS_SCOPES`. The delete
-  tools and `erase_person` carry the destructive hint.
+  Another person's message, thread, or data needs `comments:moderate` in `AGENTIC_COMMENTS_SCOPES`. The
+  `edit_message`, `delete_message`, `delete_thread`, and `erase_person` tools carry the destructive hint.
 - A text change is `{"replace": "new text"}`. A change for a cell, slide, or canvas anchor is
   `{"value": <JSON>}`.
 - From code: `import { FileStore, CommentsService, operatorActor } from "agentic-comments/local"`.
