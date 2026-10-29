@@ -1,0 +1,13 @@
+{
+  // Set tokens as a secret, never in this file:
+  //   wrangler secret put AGENTIC_COMMENTS_TOKENS
+  // The value is JSON from a token of 32 bytes or more to a principal, for example
+  // {"<output of openssl rand -hex 32>":"agent_of_human:scribe"}. A shorter token refuses the whole config.
+  // Also set the region claim: wrangler secret put AGENTIC_COMMENTS_REGION  (the value is "eu" or "us").
+  "name": "agentic-comments",
+  "main": "dist/worker.js",
+  // Create the database with `wrangler d1 create agentic-comments --location weur`, then put its id below.
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{ "binding": "DB", "database_name": "agentic-comments", "database_id": "00000000-0000-0000-0000-000000000000" }]
+}
