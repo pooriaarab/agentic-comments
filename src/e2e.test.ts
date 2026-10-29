@@ -231,6 +231,20 @@ describe("the store under stress", () => {
     expect([version.status, version.stdout.trim()]).toEqual([0, VERSION]);
   });
 
+  test("agentic-comments-mcp exits 1 at startup and names AGENTIC_COMMENTS_AS when no principal is set", () => {
+    const file = fresh();
+    for (const as of [undefined, ""]) {
+      const run = spawnSync("node", [dist("mcp-bin.js")], { env: { PATH: process.env.PATH, AGENTIC_COMMENTS_FILE: file, ...(as === undefined ? {} : { AGENTIC_COMMENTS_AS: as }) }, encoding: "utf8", timeout: 5_000, input: "" });
+      expect(run.status).toBe(1);
+      expect(run.stdout).toBe("");
+      const lines = run.stderr.trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const error = JSON.parse(lines[0]).error;
+      expect(error.code).toBe("INVALID_AUTHOR");
+      expect(error.message).toContain("AGENTIC_COMMENTS_AS");
+    }
+  });
+
   test("a lock timeout that is not a whole number is refused, and never waits for ever", () => {
     const file = fresh();
     writeFileSync(`${file}.lock`, String(process.pid));
