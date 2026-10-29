@@ -2,9 +2,23 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
-## Unreleased
+## 0.6.0
+
+### Added
+
+- Edit, delete, export, and erase for comments. The same calls exist in every surface.
+  - `Comments`: `editMessage`, `deleteMessage`, `deleteThread`, `exportPerson`, and `erasePerson`. `Suggestions`: `exportPerson` and `erasePerson`.
+    An edit sets `editedAt` and `editedBy`. An erase replaces a person's words with `[erased]` and keeps the thread shape.
+  - The `comments:moderate` right lets a principal change or erase what another person wrote. Only the author can edit or delete their own messages.
+  - Exports: `ERASED_BODY`, `ERASED_NAME`, `MODERATE_SCOPE`, and the `EditMessage` and `PersonExport` types.
+  - CLI: `edit-message`, `delete-message`, `delete-thread`, `export-person`, and `erase-person`.
+  - MCP: `edit_message`, `delete_message`, `delete_thread`, `export_person`, and `erase_person`.
+  - Worker: `PATCH` and `DELETE` on a message, `DELETE` on a thread, and `GET` and `DELETE` on `people/:name`.
+  - `agentic-comments/client`: the same five calls, with a typed result for each.
+- The error code `NO_MESSAGE`. No principal may have the name `erased`: the name is kept for erased authors.
 
 ### Changed
+
 
 - **Breaking:** the Worker signs in with `agentic-identity` by default. Credentials and principals are read from the `Store`
   of the documents with `createStoreAuth`. Any comments scope signs in, and each route checks the scope it needs: no valid
