@@ -3,6 +3,7 @@ export type CommentsErrorCode =
   | "INVALID_INPUT"
   | "INVALID_ANCHOR"
   | "NO_THREAD"
+  | "NO_MESSAGE"
   | "THREAD_RESOLVED"
   | "CORRUPT"
   | "NO_SUGGESTION"

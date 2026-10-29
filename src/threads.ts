@@ -12,6 +12,11 @@ export interface Message {
   body: string;
   /** Handles named in the body or listed on the input, without the `@`. */
   mentions: string[];
+  /** Set when the message was edited. A message that was never edited has none. */
+  editedAt?: string;
+  editedBy?: Author;
+  /** True for a message that `erasePerson` replaced with a tombstone. */
+  erased?: true;
 }
 
 export interface Thread {
@@ -53,6 +58,24 @@ export interface NewReply {
   mentions?: string[];
 }
 
+export interface EditMessage {
+  body: string;
+  mentions?: string[];
+}
+
+/** What the store holds about one person in one document. It lists only that person's own words and acts. */
+export interface PersonExport {
+  person: string;
+  exportedAt: string;
+  threads: {
+    threadId: string;
+    anchor: Anchor;
+    messages: Message[];
+    /** Set when this person made the status change that stands now. */
+    statusChange?: { status: Thread["status"]; at: string; by: Author };
+  }[];
+}
+
 export interface ThreadFilter {
   status?: Thread["status"];
   anchorType?: string;
@@ -61,6 +84,11 @@ export interface ThreadFilter {
   anchorState?: AnchorState["state"];
 }
 
+/** A scope that lets a principal edit, delete, export, or erase what another person wrote. A host gives it to an owner or admin. */
+export const MODERATE_SCOPE = "comments:moderate";
+/** What an erased message shows in place of its body, and the name it shows in place of its author. */
+export const ERASED_BODY = "[erased]";
+export const ERASED_NAME = "erased";
 const THREADS = "comments.threads";
 const MAX_BODY = 10_000;
 const MAX_MENTIONS = 50;
@@ -230,7 +258,20 @@ export class Comments {
       throw new Error("a message has no id, ISO time, valid author, or body");
     }
     if (!Array.isArray(m.mentions) || m.mentions.length > MAX_MENTIONS || !m.mentions.every(validHandle)) throw new Error("a message has bad mentions");
-    return { id: m.id, at: m.at, author, body: m.body, mentions: [...(m.mentions as string[])] };
+    const editor = m.editedBy === undefined ? undefined : readAuthor(m.editedBy);
+    if ((m.editedAt === undefined) !== (m.editedBy === undefined) || (m.editedAt !== undefined && !validDate(m.editedAt)) || (m.editedBy !== undefined && !editor)) {
+      throw new Error("a message has a bad edit stamp");
+    }
+    if (m.erased !== undefined && m.erased !== true) throw new Error("a message has a bad erased flag");
+    return {
+      id: m.id,
+      at: m.at,
+      author,
+      body: m.body,
+      mentions: [...(m.mentions as string[])],
+      ...(editor ? { editedAt: m.editedAt as string, editedBy: editor } : {}),
+      ...(m.erased ? { erased: true as const } : {}),
+    };
   }
 
   /** A thread with a bad anchor or status is malformed. A bad message is skipped and named in `issues`. */
@@ -248,11 +289,31 @@ export class Comments {
       const raw = list.toArray();
       const counts = new Map<unknown, number>();
       for (const m of raw) counts.set((m as { id?: unknown } | null)?.id, (counts.get((m as { id?: unknown } | null)?.id) ?? 0) + 1);
-      let past = 0;
-      raw.forEach((entry, index) => {
+      const parsed = raw.map((entry) => {
         try {
-          const message = this.readMessage(entry);
-          if (counts.get(message.id)! > 1) throw new Error("a message id repeats");
+          return { message: this.readMessage(entry) };
+        } catch (error) {
+          return { error: error as Error };
+        }
+      });
+      const copies = (id: string) => parsed.flatMap((p) => (p.message?.id === id ? [p.message] : []));
+      let past = 0;
+      let superseded = 0;
+      parsed.forEach((entry, index) => {
+        try {
+          if (entry.error) throw entry.error;
+          const message = entry.message;
+          if (counts.get(message.id)! > 1) {
+            // Replicas that edit one message at once leave a copy each. Edited copies resolve to one: an erased copy, then the latest edit.
+            const same = copies(message.id);
+            if (same.length !== counts.get(message.id) || !same.every((c) => c.editedAt !== undefined)) throw new Error("a message id repeats");
+            const rank = (c: Message) => `${c.erased ? 1 : 0}${c.editedAt}${JSON.stringify(c)}`;
+            const best = same.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+            if (best !== message) {
+              superseded++;
+              return;
+            }
+          }
           if (messages.length >= READ_LIMIT) past++;
           else messages.push(message);
         } catch (error) {
@@ -262,7 +323,7 @@ export class Comments {
       if (past > 0) issues.push(`${past} valid messages past the read limit are not shown`);
       if (messages.length === 0) throw new Error("the thread has no valid message");
       const anchor = this.parseAnchor(fields.get("anchor"));
-      const thread: Thread = { id, anchor, anchorState: this.anchorState(anchor), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length };
+      const thread: Thread = { id, anchor, anchorState: this.anchorState(anchor), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length - superseded };
       return { thread, issues };
     } catch (error) {
       throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${safeText(error instanceof Error ? error.message : error)}`);
@@ -347,6 +408,142 @@ export class Comments {
 
   reopen(threadId: string, actor: Actor): Thread {
     return this.setStatus(threadId, "open", actor);
+  }
+
+  /** A principal may change what it wrote. A principal with the moderate scope may change what anyone wrote. */
+  private mayChange(who: Actor, author: Author): boolean {
+    return (who.kind === author.kind && who.name === author.name) || who.scopes.includes(MODERATE_SCOPE);
+  }
+
+  private forbid(who: Actor, what: string): never {
+    throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${what}: only its author, or a principal with the ${MODERATE_SCOPE} scope, can`);
+  }
+
+  /** Replace every stored copy of a message with `next`, or remove it when `next` is undefined. */
+  private rewrite(fields: Fields, messageId: string, next: Message | undefined): void {
+    const list = fields.get("messages") as Y.Array<Message>;
+    const at = list.toArray().flatMap((m, i) => ((m as { id?: unknown } | null)?.id === messageId ? [i] : []));
+    this.ydoc.transact(() => {
+      for (const i of [...at].reverse()) list.delete(i, 1);
+      if (next) list.insert(at[0], [copy(next)]);
+    });
+  }
+
+  private find(threadId: string, messageId: unknown): { id: string; fields: Fields; thread: Thread; message: Message } {
+    const { id, fields } = this.fields(threadId);
+    const { thread } = this.read(id, fields);
+    const message = thread.messages.find((m) => m.id === messageId);
+    if (!message) throw new CommentsError("NO_MESSAGE", `thread ${shown(id)} has no message with id ${shown(messageId)}`);
+    return { id, fields, thread, message };
+  }
+
+  /** Change the body of a message. Its author and time stay, and it records who edited it and when. */
+  editMessage(threadId: string, messageId: string, input: EditMessage, actor: Actor): Message {
+    const who = assertActor(actor);
+    const given = exact(input, ["body", "mentions"], "an edit");
+    const text = body(given.body);
+    const { id, fields, thread, message } = this.find(threadId, messageId);
+    if (message.erased) throw new CommentsError("FORBIDDEN", "an erased message cannot be edited");
+    if (!this.mayChange(who, message.author)) this.forbid(who, "edit this message");
+    if (thread.status === "resolved") throw new CommentsError("THREAD_RESOLVED", `thread ${shown(id)} is resolved; reopen it to edit`);
+    const next = this.readEdited(message, text, given.mentions, who);
+    this.rewrite(fields, message.id, next);
+    return this.find(id, message.id).message;
+  }
+
+  private readEdited(message: Message, text: string, explicit: unknown, who: Actor): Message {
+    const edited = { ...message, body: text, mentions: mentionsOf(text, explicit), editedAt: this.time(), editedBy: { kind: who.kind, name: who.name } };
+    try {
+      return this.readMessage(copy(edited));
+    } catch (error) {
+      return invalid(`the message cannot be stored: ${(error as Error).message}`);
+    }
+  }
+
+  /** Remove one message. The last message of a thread stays: delete the thread instead. */
+  deleteMessage(threadId: string, messageId: string, actor: Actor): { threadId: string; messageId: string } {
+    const who = assertActor(actor);
+    const { id, fields, thread, message } = this.find(threadId, messageId);
+    if (!this.mayChange(who, message.author)) this.forbid(who, "delete this message");
+    if (thread.messages.length === 1) invalid(`thread ${shown(id)} has only this message; delete the thread instead`);
+    this.rewrite(fields, message.id, undefined);
+    return { threadId: id, messageId: message.id };
+  }
+
+  /**
+   * Remove a thread and all its messages. Its author may do it when every message is theirs. Once someone
+   * else replied, or a stored message cannot be read, it needs the moderate scope.
+   */
+  deleteThread(threadId: string, actor: Actor): { threadId: string } {
+    const who = assertActor(actor);
+    const { id, fields } = this.fields(threadId);
+    const { thread } = this.read(id, fields);
+    const own = thread.skipped === 0 && thread.messages.every((m) => m.author.kind === who.kind && m.author.name === who.name);
+    if (!own && !who.scopes.includes(MODERATE_SCOPE)) this.forbid(who, "delete this thread");
+    this.map.delete(id);
+    return { threadId: id };
+  }
+
+  /** Check who a person export or erase is for, and that the actor may. Used by `Suggestions`. */
+  checkPerson(person: unknown, actor: Actor): string {
+    const who = assertActor(actor);
+    if (typeof person !== "string" || person === "" || person !== person.trim() || person.length > 128) invalid("a person is a name of 1 to 128 characters");
+    if (person === ERASED_NAME) invalid("a tombstone is not a person");
+    if (who.name !== person && !who.scopes.includes(MODERATE_SCOPE)) {
+      throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot read or erase the data of another person without the ${MODERATE_SCOPE} scope`);
+    }
+    return person as string;
+  }
+
+  /** Every message a person wrote, and the status change of theirs that stands, in this document. A person may export their own data. */
+  exportPerson(person: string, actor: Actor): PersonExport {
+    const name = this.checkPerson(person, actor);
+    const threads: PersonExport["threads"] = [];
+    for (const thread of this.list()) {
+      const messages = thread.messages.filter((m) => m.author.name === name);
+      const status = thread.statusBy.name === name;
+      if (messages.length === 0 && !status) continue;
+      threads.push({
+        threadId: thread.id,
+        anchor: copy(thread.anchor),
+        messages: copy(messages),
+        ...(status ? { statusChange: { status: thread.status, at: thread.statusAt, by: copy(thread.statusBy) } } : {}),
+      });
+    }
+    return { person: name, exportedAt: this.time(), threads };
+  }
+
+  /**
+   * Replace every message a person wrote with a tombstone: the body becomes "[erased]", the author name
+   * becomes "erased", and the mentions and edit stamp go. The author kind stays, so machine-made work stays
+   * marked. Thread shape, order, and times stay. A status change of theirs gets the same tombstone author.
+   * Names inside other people's messages are not touched. Returns how many messages and status changes were erased.
+   */
+  erasePerson(person: string, actor: Actor): { messages: number; statuses: number } {
+    const name = this.checkPerson(person, actor);
+    const tomb = (a: Author): Author => ({ kind: a.kind, name: ERASED_NAME });
+    let messages = 0;
+    let statuses = 0;
+    this.ydoc.transact(() => {
+      for (const [id, fields] of this.map.entries()) {
+        let read: Thread;
+        try {
+          read = this.read(id, fields).thread;
+        } catch {
+          continue; // bad data stays for problems() to name
+        }
+        for (const m of read.messages) {
+          if (m.author.name !== name) continue;
+          this.rewrite(fields, m.id, { id: m.id, at: m.at, author: tomb(m.author), body: ERASED_BODY, mentions: [], editedAt: this.time(), editedBy: tomb(m.author), erased: true });
+          messages++;
+        }
+        if (read.statusBy.name === name) {
+          fields.set("state", { status: read.status, by: tomb(read.statusBy), at: read.statusAt });
+          statuses++;
+        }
+      }
+    });
+    return { messages, statuses };
   }
 
   get(threadId: string): Thread {

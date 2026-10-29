@@ -28,6 +28,7 @@ const CODES: Record<ApiErrorCode, true> = {
   INVALID_INPUT: true,
   INVALID_ANCHOR: true,
   NO_THREAD: true,
+  NO_MESSAGE: true,
   THREAD_RESOLVED: true,
   CORRUPT: true,
   NO_SUGGESTION: true,

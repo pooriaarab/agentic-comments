@@ -53,6 +53,27 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Edit, delete, export, and erase
+
+- `comments.editMessage(threadId, messageId, { body, mentions? }, actor)` changes a body. The id, author,
+  time, and place stay. The message gets `editedAt` and `editedBy`. A resolved thread refuses an edit.
+- `comments.deleteMessage(threadId, messageId, actor)` removes one message. The last message of a thread
+  stays: delete the thread instead.
+- `comments.deleteThread(threadId, actor)` removes a thread. Its author can do it while every message is theirs.
+- `comments.exportPerson(name, actor)` returns the messages a person wrote and the status change of theirs
+  that stands. It holds no one else's words. `suggestions.exportPerson` lists their suggestions.
+- `comments.erasePerson(name, actor)` replaces each message of that person with a tombstone: the body is
+  `[erased]`, the author name is `erased`, and mentions go. The author kind stays, so machine-made work stays
+  marked. The thread keeps its shape, order, and times. `suggestions.erasePerson` gives their suggestions a
+  tombstone author and drops the summary.
+
+Only the author can edit or delete a message, and a person can export or erase their own data. A principal
+with the `comments:moderate` scope (`MODERATE_SCOPE`) can do it for anyone. The host gives that scope to an
+owner or admin. An edit made by a moderator records the moderator in `editedBy`.
+
+Replicas that edit one message at once leave a copy each. The read keeps the erased copy, or else the
+latest edit.
+
 ## Anchors for plain text
 
 `agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
@@ -357,7 +378,7 @@ const stop = notifications.subscribe(async (event) => {
 - Events come from the data and not from the calls, so a status change that two replicas make at once gives
   each replica its own event, and a thread that arrives whole gives events for its current state only.
 - Every replica of a document must register the same custom anchor kinds.
-- A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
+- A repeated message id hides every copy, unless every copy is an edit: then the read keeps one. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
 - The quoted text of a text anchor is not checked when a thread is read. A peer can store any text there.
   `textAnchor` refuses a quote whose JSON form passes 4,096 characters. Quotes with many newlines or
@@ -368,6 +389,9 @@ const stop = notifications.subscribe(async (event) => {
 - A body mentions anyone named as `@handle`. Put `@` text in backticks to avoid that. Any two backticks in a body pair up, so a loose backtick
   can hide a real mention that sits between two of them. A scoped
   package name such as `@scope/pkg` is not a mention.
+- Erase does not touch a name that another person typed in their own message, the `change` of a suggestion,
+  or the names of those who decided a suggestion. Yjs keeps no old text of a deleted or replaced message, but a
+  copy of the document that you saved before the erase still holds it.
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
   and `. _ -`. A longer handle in a body is refused.
 

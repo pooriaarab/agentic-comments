@@ -3,7 +3,7 @@ import type { Anchor, AnchorState } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown } from "./text.js";
-import type { Comments } from "./threads.js";
+import { ERASED_NAME, type Comments } from "./threads.js";
 import { copy, exact, invalid, strictCopy, validDate } from "./validate.js";
 
 /** The scope that lets an agent accept or reject a suggestion that another principal wrote. */
@@ -238,6 +238,31 @@ export class Suggestions {
   private fields(id: unknown): { id: string; fields: Fields } {
     if (typeof id !== "string" || !ID.test(id) || !this.map.has(id)) throw new CommentsError("NO_SUGGESTION", `no suggestion with id ${shown(id)}`);
     return { id, fields: this.map.get(id) as Fields };
+  }
+
+  /** Every suggestion a person wrote in this document. A person may export their own data. */
+  exportPerson(person: string, actor: Actor): Suggestion[] {
+    const name = this.comments.checkPerson(person, actor);
+    return this.list().filter((s) => s.author.name === name);
+  }
+
+  /**
+   * Give every suggestion a person wrote a tombstone author and drop its summary. The change stays, because
+   * an accepted change is already part of the content. The names of those who decided stay too. Returns the count.
+   */
+  erasePerson(person: string, actor: Actor): number {
+    const name = this.comments.checkPerson(person, actor);
+    let count = 0;
+    this.ydoc.transact(() => {
+      for (const fields of this.map.values()) {
+        const author = fields instanceof Y.Map ? readAuthor(fields.get("author")) : undefined;
+        if (!author || author.name !== name) continue;
+        fields.set("author", { kind: author.kind, name: ERASED_NAME });
+        fields.delete("summary");
+        count++;
+      }
+    });
+    return count;
   }
 
   /** Propose a change. Anyone can suggest. The host stamps the author. */
