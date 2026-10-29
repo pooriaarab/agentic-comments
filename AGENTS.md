@@ -1,6 +1,6 @@
 # agentic-comments agent guide
 
-Comment threads anchored to any content, from people and agents.
+Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Mental model
 
@@ -18,6 +18,10 @@ Threads live on a Yjs document. Replicas merge them without a server.
   authenticated. An agent never calls it, and nobody passes an author in an input.
 - `new Comments(ydoc)` reads and writes the threads on that document.
 - `add`, `reply`, `resolve`, `reopen`, `get`, `list`, `problems`.
+
+Suggestions: `new Suggestions(comments, host)`, then `add`, `accept`, `reject`, `get`, `list`. The host
+owns the change and the `apply` hook. An agent accepts only with the `comments:accept` scope, and never
+accepts or rejects its own suggestion.
 
 The CLI and MCP server are not built yet.
 

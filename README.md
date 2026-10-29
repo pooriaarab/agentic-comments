@@ -4,10 +4,10 @@
 
 [Source](https://github.com/pooriaarab/agentic-comments) · [Support](https://github.com/pooriaarab/agentic-comments/issues)
 
-Comment threads anchored to any content, from people and agents.
+Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Only the thread model works. It is not on npm yet. Suggestions,
-> anchor survival, the CLI, the MCP server, and notifications come next.
+> Status: early. Threads and suggestions work. It is not on npm yet. Anchor survival, the CLI, the
+> MCP server, and notifications come next.
 
 ## Install
 
@@ -45,6 +45,8 @@ normal sync, and every replica sees the same threads.
   You can add your own anchor type.
 - A text anchor uses Yjs relative positions, so it follows its text through edits.
 - Messages with mentions. Resolve and reopen a thread.
+- Suggestions: a change your app proposes. A person, or an agent with the accept scope, accepts it.
+  An agent never accepts or rejects its own. Two replicas that accept at once apply it once.
 - The host stamps every author. An operation never reads an author from its input.
 - Every message keeps the author kind, so agent comments stay marked as machine-made.
 - Replies and status merge across replicas. Two replicas that resolve at once agree.
@@ -63,7 +65,7 @@ normal sync, and every replica sees the same threads.
 
 ## Limits
 
-- No suggestions yet. No file store, CLI, MCP server, or HTTP API yet.
+- No file store, CLI, MCP server, or HTTP API yet.
 - `add` checks that a text anchor points into this document and matches its quote. A thread does not
   check later that its anchor still exists. That check comes next.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
@@ -76,6 +78,9 @@ normal sync, and every replica sees the same threads.
 - Every replica of a document must register the same custom anchor kinds.
 - A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
+- The quoted text of a text anchor is not checked when a thread is read. A peer can store any text there.
+  `textAnchor` refuses a quote whose JSON form passes 4,096 characters. Quotes with many newlines or
+  quotation marks hit that before 2,000 characters.
 - The first visible message decides when a thread started, so a peer that inserts an older message at
   the front moves the thread in `list()`.
 - A read scans every stored entry. A peer that writes millions of junk entries slows every read.
@@ -95,3 +100,34 @@ npm run ci:local
 ## License
 
 MIT.
+
+## Suggestions
+
+Your app owns the change. This package stores it as JSON, tracks the decision, and calls your `apply`.
+
+```ts
+import { ACCEPT_SCOPE, Suggestions } from "agentic-comments";
+
+const suggestions = new Suggestions(comments, {
+  apply(change, { anchor, by, ydoc }) {
+    // Edit ydoc here. Throw before you edit when the change cannot apply.
+    return { /* a receipt, JSON that lets revert undo this edit */ };
+  },
+  revert(receipt, { ydoc }) {
+    // Undo the edit. It must be safe to run more than once.
+  },
+});
+
+const s = suggestions.add({ anchor, change: { replacement: "bold" }, summary: "Word choice" }, scribe);
+suggestions.accept(s.id, ada);
+```
+
+- A person accepts or rejects. An agent needs the `comments:accept` scope, and never decides a
+  suggestion it wrote. Two agents with the same name count as one.
+- Accept makes the check, the edit, and the record in one step. If `apply` throws, the suggestion
+  stays pending. A host that cannot undo a double apply must say `idempotent: true`.
+- Two replicas that accept before they meet each apply the edit. After the merge, the application of
+  the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
+  accepted.
+- A receipt is stored data. Check it in `revert` before you use it.
+- `apply` and `revert` must be synchronous, and must edit only the Yjs document.

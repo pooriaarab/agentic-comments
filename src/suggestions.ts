@@ -1,0 +1,329 @@
+import * as Y from "yjs";
+import type { Anchor } from "./anchor.js";
+import { CommentsError } from "./errors.js";
+import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
+import { BODY_FORBIDDEN, ID, safeId, safeText, shown } from "./text.js";
+import type { Comments } from "./threads.js";
+import { copy, exact, invalid, strictCopy, validDate } from "./validate.js";
+
+/** The scope that lets an agent accept or reject a suggestion that another principal wrote. */
+export const ACCEPT_SCOPE = "comments:accept";
+
+const MAX_CHANGE = 64_000;
+const MAX_RECEIPT = 16_000;
+const MAX_SUMMARY = 1_000;
+const SUGGESTIONS = "comments.suggestions";
+const APPLIED = "comments.suggestion-applied";
+const REJECTED = "comments.suggestion-rejected";
+
+export interface Suggestion {
+  id: string;
+  anchor: Anchor;
+  /** What the host app proposes. This package never reads it. The host's `apply` does. */
+  change: unknown;
+  summary?: string;
+  author: Author;
+  createdAt: string;
+  status: "pending" | "accepted" | "rejected";
+  decidedBy?: Author;
+  decidedAt?: string;
+}
+
+export interface ApplyContext {
+  suggestionId: string;
+  anchor: Anchor;
+  /** Who wrote the suggestion. */
+  author: Author;
+  /** Who accepts it. Label the edit with this author. */
+  by: Author;
+  ydoc: Y.Doc;
+}
+
+export interface RevertContext {
+  suggestionId: string;
+  ydoc: Y.Doc;
+}
+
+/**
+ * The host app's side. Each hook is synchronous, so the check and the edit stay in one step.
+ * Make every edit in `ydoc`, so it merges with the rest.
+ */
+export interface SuggestionHost {
+  /** Check a change when it is suggested. Return the clean change, or throw. */
+  parse?(change: unknown): unknown;
+  /**
+   * Make the edit. Throw before you change anything when the edit cannot apply, for example when the
+   * anchored content changed. Yjs cannot undo a partial edit. Return a receipt, JSON data that lets
+   * `revert` undo this edit.
+   */
+  apply(change: unknown, context: ApplyContext): unknown;
+  /**
+   * Two replicas can accept one suggestion before they meet. Each applies the edit. After a merge one
+   * application stays and `revert` undoes each other. It runs on every replica, so it must be
+   * idempotent. A receipt comes from stored data, so check it before you use it.
+   */
+  revert?(receipt: unknown, context: RevertContext): void;
+  /** Say that applying the same change twice is harmless. Then no `revert` is needed. */
+  idempotent?: boolean;
+}
+
+export interface NewSuggestion {
+  anchor: Anchor;
+  change: unknown;
+  summary?: string;
+}
+
+export interface SuggestionFilter {
+  status?: Suggestion["status"];
+}
+
+type Fields = Y.Map<unknown>;
+interface Decision {
+  client: number;
+  by: Author;
+  at: string;
+  receipt?: unknown;
+}
+
+const isPerson = (who: Author): boolean => who.kind === "human" || who.kind === "user_token";
+
+/** Two agents are the same when their names match, whatever their kinds. This fails closed. */
+const sameAgent = (a: Author, b: Author): boolean => !isPerson(a) && !isPerson(b) && a.name === b.name;
+
+const thenable = (value: unknown): boolean => typeof (value as { then?: unknown } | null)?.then === "function";
+
+/**
+ * Suggested changes to content, from people and agents. Nothing changes until a person, or an agent
+ * with the accept scope that did not write it, accepts. Accept and reject are safe across replicas.
+ */
+export class Suggestions {
+  private readonly onTransaction: (tr: Y.Transaction) => void;
+  private failures: { id: string; reason: string }[] = [];
+
+  constructor(
+    private readonly comments: Comments,
+    private readonly host: SuggestionHost,
+  ) {
+    if (typeof host?.apply !== "function" || (typeof host.revert !== "function" && host.idempotent !== true)) {
+      invalid("a host needs apply, and either revert or idempotent: true, so two accepts at once cannot apply a change twice");
+    }
+    this.onTransaction = (tr) => {
+      if (!tr.local && tr.changedParentTypes.has(this.applied as Y.AbstractType<any>)) this.settle();
+    };
+    this.ydoc.on("afterTransaction", this.onTransaction);
+    this.settle();
+  }
+
+  /** Stop listening to the document. */
+  close(): void {
+    this.ydoc.off("afterTransaction", this.onTransaction);
+  }
+
+  private get ydoc(): Y.Doc {
+    return this.comments.ydoc;
+  }
+  private get map(): Y.Map<Fields> {
+    return this.ydoc.getMap<Fields>(SUGGESTIONS);
+  }
+  private get applied(): Y.Map<unknown> {
+    return this.ydoc.getMap<unknown>(APPLIED);
+  }
+  private get rejected(): Y.Map<unknown> {
+    return this.ydoc.getMap<unknown>(REJECTED);
+  }
+
+  private change(raw: unknown): unknown {
+    let clean: unknown;
+    try {
+      clean = strictCopy(raw);
+      if (this.host.parse) clean = strictCopy(this.host.parse(copy(clean)));
+    } catch (error) {
+      return invalid(`the change is refused: ${safeText(error instanceof Error ? error.message : error)}`);
+    }
+    if (JSON.stringify(clean).length > MAX_CHANGE) invalid(`a change holds up to ${MAX_CHANGE} characters of JSON`);
+    return clean;
+  }
+
+  /** Records of one kind for one suggestion, in client order. A record that is not valid is not counted. */
+  private records(map: Y.Map<unknown>, id: string): Decision[] {
+    const out: Decision[] = [];
+    for (const [key, raw] of map.entries()) {
+      if (!key.startsWith(`${id}:`)) continue;
+      const client = Number(key.slice(id.length + 1));
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const by = readAuthor(r.by);
+      if (!Number.isSafeInteger(client) || client < 0 || !by || !validDate(r.at)) continue;
+      out.push({ client, by, at: r.at, ...(r.receipt === undefined ? {} : { receipt: r.receipt }) });
+    }
+    return out.sort((a, b) => a.client - b.client);
+  }
+
+  private read(id: string, fields: unknown): Suggestion {
+    try {
+      if (!ID.test(id)) throw new Error("the suggestion id is not short and plain");
+      if (!(fields instanceof Y.Map)) throw new Error("the suggestion is not a map");
+      const author = readAuthor(fields.get("author"));
+      const createdAt = fields.get("createdAt");
+      const summary = fields.get("summary");
+      const change = fields.get("change");
+      if (!author || !validDate(createdAt)) throw new Error("the suggestion has no valid author or time");
+      if (summary !== undefined && !(typeof summary === "string" && summary.trim() !== "" && summary.length <= MAX_SUMMARY && !BODY_FORBIDDEN.test(summary))) {
+        throw new Error("the summary is not valid");
+      }
+      if (change === undefined || JSON.stringify(strictCopy(change)).length > MAX_CHANGE) throw new Error("the change is missing or too large");
+      const won = this.records(this.applied, id)[0];
+      const refused = this.records(this.rejected, id)[0];
+      const decision = won ? { status: "accepted" as const, ...won } : refused ? { status: "rejected" as const, ...refused } : undefined;
+      return {
+        id,
+        anchor: this.comments.parseAnchor(fields.get("anchor")),
+        change: copy(change),
+        ...(summary === undefined ? {} : { summary }),
+        author,
+        createdAt,
+        status: decision?.status ?? "pending",
+        ...(decision ? { decidedBy: decision.by, decidedAt: decision.at } : {}),
+      };
+    } catch (error) {
+      throw new CommentsError("CORRUPT", `suggestion ${shown(id)} is malformed: ${safeText(error instanceof Error ? error.message : error)}`);
+    }
+  }
+
+  private fields(id: unknown): { id: string; fields: Fields } {
+    if (typeof id !== "string" || !ID.test(id) || !this.map.has(id)) throw new CommentsError("NO_SUGGESTION", `no suggestion with id ${shown(id)}`);
+    return { id, fields: this.map.get(id) as Fields };
+  }
+
+  /** Propose a change. Anyone can suggest. The host stamps the author. */
+  add(input: NewSuggestion, actor: Actor): Suggestion {
+    const who = assertActor(actor);
+    const given = exact(input, ["anchor", "change", "summary"], "a new suggestion");
+    const anchor = this.comments.checkAnchor(given.anchor);
+    const change = this.change(given.change);
+    const summary = given.summary;
+    if (summary !== undefined && !(typeof summary === "string" && summary.trim() !== "" && summary.length <= MAX_SUMMARY && !BODY_FORBIDDEN.test(summary))) {
+      invalid(`a summary must be text of 1 to ${MAX_SUMMARY} characters, with no control or invisible characters`);
+    }
+    const id = globalThis.crypto.randomUUID();
+    const createdAt = this.comments.time();
+    this.ydoc.transact(() => {
+      const fields: Fields = new Y.Map();
+      this.map.set(id, fields);
+      fields.set("anchor", anchor);
+      fields.set("change", change);
+      if (summary !== undefined) fields.set("summary", summary);
+      fields.set("author", { kind: who.kind, name: who.name });
+      fields.set("createdAt", createdAt);
+    });
+    return this.get(id);
+  }
+
+  /** A person decides. An agent needs the accept scope, and never decides its own suggestion. */
+  private mayDecide(who: Actor, s: Suggestion, verb: string): void {
+    const ok = isPerson(who) ? true : who.scopes.includes(ACCEPT_SCOPE) && !sameAgent(s.author, who);
+    if (!ok) throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${verb} this suggestion: a person, or an agent with the ${ACCEPT_SCOPE} scope that did not write it, can`);
+  }
+
+  /**
+   * Apply the change as the accepting author and record the decision, in one step. Accepting an
+   * accepted suggestion changes nothing. When `apply` throws, the suggestion stays pending.
+   */
+  accept(suggestionId: string, actor: Actor): Suggestion {
+    const who = assertActor(actor);
+    const { id, fields } = this.fields(suggestionId);
+    const s = this.read(id, fields);
+    this.mayDecide(who, s, "accept");
+    if (s.status === "accepted") return s;
+    if (s.status === "rejected") throw new CommentsError("ALREADY_DECIDED", `suggestion ${shown(id)} is already rejected`);
+    const by: Author = { kind: who.kind, name: who.name };
+    this.ydoc.transact(() => {
+      let receipt: unknown;
+      try {
+        const change = this.change(s.change);
+        receipt = this.host.apply(change, { suggestionId: id, anchor: s.anchor, author: s.author, by, ydoc: this.ydoc });
+        if (thenable(receipt)) throw new Error("apply must finish at once and cannot return a promise");
+        receipt = receipt === undefined ? null : strictCopy(receipt);
+        if (JSON.stringify(receipt).length > MAX_RECEIPT) throw new Error(`a receipt holds up to ${MAX_RECEIPT} characters of JSON`);
+      } catch (error) {
+        throw new CommentsError("APPLY_FAILED", `the change could not be applied: ${safeText(error instanceof Error ? error.message : error)}`);
+      }
+      this.applied.set(`${id}:${this.ydoc.clientID}`, { by, at: this.comments.time(), receipt });
+    });
+    return this.get(id);
+  }
+
+  /** Same right as accept. A person can withdraw their own suggestion. */
+  reject(suggestionId: string, actor: Actor): Suggestion {
+    const who = assertActor(actor);
+    const { id, fields } = this.fields(suggestionId);
+    const s = this.read(id, fields);
+    this.mayDecide(who, s, "reject");
+    if (s.status === "rejected") return s;
+    if (s.status === "accepted") throw new CommentsError("ALREADY_DECIDED", `suggestion ${shown(id)} is already accepted`);
+    this.rejected.set(`${id}:${this.ydoc.clientID}`, { by: { kind: who.kind, name: who.name }, at: this.comments.time() });
+    return this.get(id);
+  }
+
+  get(suggestionId: string): Suggestion {
+    const { id, fields } = this.fields(suggestionId);
+    return this.read(id, fields);
+  }
+
+  /** In the order they were made. A malformed suggestion is skipped, and `problems()` names it. */
+  list(filter: SuggestionFilter = {}): Suggestion[] {
+    const given = exact(filter, ["status"], "a filter");
+    if (given.status !== undefined && !["pending", "accepted", "rejected"].includes(given.status as string)) invalid("status must be pending, accepted, or rejected");
+    return this.readAll()
+      .suggestions.filter((s) => given.status === undefined || s.status === given.status)
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  /** Suggestions that could not be read, and reverts that failed. */
+  problems(): { id: string; reason: string }[] {
+    return [...this.readAll().problems, ...this.failures];
+  }
+
+  private readAll(): { suggestions: Suggestion[]; problems: { id: string; reason: string }[] } {
+    const suggestions: Suggestion[] = [];
+    const problems: { id: string; reason: string }[] = [];
+    for (const [id, fields] of this.map.entries()) {
+      try {
+        suggestions.push(this.read(id, fields));
+      } catch (error) {
+        problems.push({ id: safeId(id), reason: (error as Error).message });
+      }
+    }
+    return { suggestions, problems };
+  }
+
+  /**
+   * Two replicas can accept one suggestion before they meet. After a merge, the application of the
+   * lowest client id stays, and the host reverts each other one. Every replica reaches the same result.
+   * A revert that throws leaves its record, so the next merge tries again.
+   */
+  settle(): void {
+    const groups = new Map<string, { key: string; client: number; receipt: unknown }[]>();
+    for (const [key, raw] of this.applied.entries()) {
+      const cut = key.lastIndexOf(":");
+      const id = key.slice(0, cut);
+      const client = Number(key.slice(cut + 1));
+      if (cut < 0 || !ID.test(id) || !Number.isSafeInteger(client) || client < 0) continue;
+      groups.set(id, [...(groups.get(id) ?? []), { key, client, receipt: (raw as { receipt?: unknown } | null)?.receipt }]);
+    }
+    this.failures = [];
+    this.ydoc.transact(() => {
+      for (const [id, group] of groups) {
+        if (group.length < 2) continue;
+        group.sort((a, b) => a.client - b.client);
+        for (const loser of group.slice(1)) {
+          try {
+            this.host.revert?.(loser.receipt, { suggestionId: id, ydoc: this.ydoc });
+            this.applied.delete(loser.key);
+          } catch (error) {
+            this.failures.push({ id: safeId(id), reason: `a duplicate application could not be reverted: ${safeText(error instanceof Error ? error.message : error)}` });
+          }
+        }
+      }
+    });
+  }
+}

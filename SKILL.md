@@ -1,11 +1,11 @@
 ---
 name: agentic-comments
-description: Comment threads anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
+description: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs.
 ---
 
 # agentic-comments
 
-Comment threads anchored to any content, from people and agents.
+Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Use the SDK
 
@@ -18,6 +18,9 @@ const comments = new Comments(ydoc);
 const thread = comments.add({ anchor: { type: "cell", key: "Sheet1!B4" }, body: "Check this total." }, actor);
 comments.reply(thread.id, { body: "Fixed." }, actor);
 ```
+
+Suggest a change with `suggestions.add({ anchor, change, summary }, actor)`. Accept needs a person or
+the `comments:accept` scope. You never accept or reject your own suggestion.
 
 The CLI and the MCP server are not built yet.
 

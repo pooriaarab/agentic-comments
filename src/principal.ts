@@ -40,11 +40,12 @@ export class Actor implements Author {
 
   static of(input: StampInput): Actor {
     const author = readAuthor(input);
-    const scopes = author ? (input as { scopes?: unknown }).scopes : undefined;
-    if (!author || !(scopes === undefined || (Array.isArray(scopes) && scopes.every((s) => typeof s === "string" && s !== "")))) {
+    const given = author ? (input as { scopes?: unknown }).scopes : undefined;
+    const scopes = given === undefined ? [] : Array.isArray(given) ? Array.from(given as unknown[]) : undefined;
+    if (!author || !scopes || !scopes.every((s) => typeof s === "string" && s !== "")) {
       throw new CommentsError("INVALID_AUTHOR", `an author needs a kind (${PRINCIPAL_KINDS.join(", ")}), a name, and scopes that are a list of text`);
     }
-    const actor = new Actor(author.kind, author.name, (scopes as string[] | undefined) ?? []);
+    const actor = new Actor(author.kind, author.name, scopes as string[]);
     issued.add(actor);
     return actor;
   }
