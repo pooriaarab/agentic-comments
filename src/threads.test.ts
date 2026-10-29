@@ -1,0 +1,319 @@
+import * as Y from "yjs";
+import { describe, expect, test } from "vitest";
+import { Comments, CommentsError, stamp, textAnchor, type Anchor } from "./index.js";
+
+// Ways this model can fail, written before the code:
+//  1. A caller claims an author, forges an actor, or edits one after stamping.
+//  2. The stored author keeps scopes, loses its kind, or defaults to a person.
+//  3. A body or a mention is empty, too long, or not text, and half-writes a thread.
+//  4. An anchor has an unknown type, a bad shape, or extra keys that ride along.
+//  5. A text anchor does not follow its text when another replica edits.
+//  6. A missing or odd thread id reaches a prototype key or a wrong thread.
+//  7. A reply lands on a resolved thread, or resolve is not idempotent.
+//  8. Two replicas lose a reply, or disagree on order or status after a merge.
+//  9. A hostile replica writes a malformed thread and breaks listing for all.
+
+const ada = stamp({ kind: "human", name: "ada" });
+const bot = stamp({ kind: "agent_of_human", name: "scribe" });
+const cell: Anchor = { type: "cell", key: "Sheet1!B4" };
+
+let tick = 0;
+const clock = () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++));
+const make = (doc = new Y.Doc()) => new Comments(doc, { now: clock });
+
+function sync(a: Y.Doc, b: Y.Doc): void {
+  Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+  Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+}
+
+const code = (fn: () => unknown): string | undefined => {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof CommentsError) return error.code;
+    throw error;
+  }
+  return undefined;
+};
+
+describe("author stamping", () => {
+  test("stamp refuses a missing kind, an unknown kind, and a bad name or scopes", () => {
+    const bad: unknown[] = [
+      null,
+      "ada",
+      { name: "ada" },
+      { kind: "root", name: "ada" },
+      { kind: "human" },
+      { kind: "human", name: "  " },
+      { kind: "human", name: 7 },
+      { kind: "human", name: "ada", scopes: "comments:accept" },
+      { kind: "human", name: "ada", scopes: [""] },
+    ];
+    for (const value of bad) expect(code(() => stamp(value as never))).toBe("INVALID_AUTHOR");
+  });
+
+  test("a missing or unstamped actor is refused, even with a valid shape", () => {
+    const comments = make();
+    expect(code(() => comments.add({ anchor: cell, body: "hi" }, undefined as never))).toBe("INVALID_AUTHOR");
+    const forged = { kind: "human", name: "ada", scopes: [] };
+    expect(code(() => comments.add({ anchor: cell, body: "hi" }, forged as never))).toBe("INVALID_AUTHOR");
+    expect(comments.list()).toEqual([]);
+  });
+
+  test("a stamped actor cannot change after stamping", () => {
+    expect(() => {
+      (bot as { kind: string }).kind = "human";
+    }).toThrow();
+    expect(bot.kind).toBe("agent_of_human");
+  });
+
+  test("input that claims an author or any unknown key is refused", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "hi" }, ada);
+    const claim = { anchor: cell, body: "hi", author: { kind: "human", name: "boss" } };
+    expect(code(() => comments.add(claim as never, bot))).toBe("INVALID_INPUT");
+    expect(code(() => comments.reply(thread.id, { body: "x", author: { kind: "human", name: "boss" } } as never, bot))).toBe("INVALID_INPUT");
+    expect(comments.list()).toHaveLength(1);
+    expect(comments.get(thread.id).messages).toHaveLength(1);
+  });
+
+  test("the stored author keeps kind and name, drops scopes, and survives a round trip", () => {
+    const scoped = stamp({ kind: "agent_of_human", name: "scribe", scopes: ["comments:accept"] });
+    const doc = new Y.Doc();
+    const thread = make(doc).add({ anchor: cell, body: "hi" }, scoped);
+    const fresh = new Y.Doc();
+    Y.applyUpdate(fresh, Y.encodeStateAsUpdate(doc));
+    const author = make(fresh).get(thread.id).messages[0].author;
+    expect(author).toEqual({ kind: "agent_of_human", name: "scribe" });
+  });
+});
+
+describe("bodies and mentions", () => {
+  test("an empty, blank, non-text, or oversized body is refused and writes nothing", () => {
+    const comments = make();
+    for (const body of ["", "   ", 5, null, "x".repeat(10_001)]) {
+      expect(code(() => comments.add({ anchor: cell, body: body as never }, ada))).toBe("INVALID_INPUT");
+    }
+    expect(comments.list()).toEqual([]);
+    const thread = comments.add({ anchor: cell, body: "ok" }, ada);
+    expect(code(() => comments.reply(thread.id, { body: " " }, ada))).toBe("INVALID_INPUT");
+    expect(comments.get(thread.id).messages).toHaveLength(1);
+  });
+
+  test("mentions come from the body, ignore emails, and drop repeats", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "@grace and @scribe, mail me@x.org. @grace again." }, ada);
+    expect(thread.messages[0].mentions).toEqual(["grace", "scribe"]);
+  });
+
+  test("explicit mentions merge with parsed ones and must be valid", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: cell, body: "hi @grace", mentions: ["@scribe", "grace"] }, ada);
+    expect(thread.messages[0].mentions).toEqual(["grace", "scribe"]);
+    for (const mentions of [[""], ["two words"], [3], "grace", Array.from({ length: 51 }, (_, i) => `u${i}`)]) {
+      expect(code(() => comments.add({ anchor: cell, body: "hi", mentions: mentions as never }, ada))).toBe("INVALID_INPUT");
+    }
+    expect(comments.list()).toHaveLength(1);
+  });
+
+  test("list can find threads that mention a handle", () => {
+    const comments = make();
+    comments.add({ anchor: cell, body: "plain" }, ada);
+    const hit = comments.add({ anchor: cell, body: "look @grace" }, ada);
+    expect(comments.list({ mentioning: "grace" }).map((t) => t.id)).toEqual([hit.id]);
+    comments.reply(hit.id, { body: "ack" }, bot);
+    expect(comments.list({ mentioning: "nobody" })).toEqual([]);
+  });
+});
+
+describe("anchors", () => {
+  test("a bad anchor is refused and writes nothing", () => {
+    const comments = make();
+    const text = new Y.Doc().getText("t");
+    text.insert(0, "hello");
+    const good = textAnchor(text, 0, 5);
+    const bad: unknown[] = [
+      undefined,
+      null,
+      "cell",
+      [],
+      { type: "table", key: "x" },
+      { type: "cell" },
+      { type: "cell", key: "" },
+      { type: "cell", key: 4 },
+      { type: "cell", key: Number.NaN },
+      { type: "cell", key: "k".repeat(257) },
+      { type: "slide", elementId: " " },
+      { type: "canvas", elementId: null },
+      { ...good, text: "" },
+      { ...good, text: "t".repeat(2_001) },
+      { ...good, start: {} },
+      { ...good, start: { item: { client: -1, clock: 0 } } },
+      { ...good, end: { item: { client: 1, clock: 1.5 } } },
+      { ...good, end: { item: { client: 1, clock: 0 }, assoc: "x" } },
+    ];
+    for (const anchor of bad) expect(code(() => comments.add({ anchor: anchor as never, body: "hi" }, ada))).toBe("INVALID_ANCHOR");
+    expect(comments.list()).toEqual([]);
+  });
+
+  test("extra keys on an anchor are not stored", () => {
+    const comments = make();
+    const thread = comments.add({ anchor: { type: "canvas", elementId: "shape-1", note: "smuggled" } as never, body: "hi" }, ada);
+    expect(thread.anchor).toEqual({ type: "canvas", elementId: "shape-1" });
+  });
+
+  test("cell, slide, and canvas anchors round trip", () => {
+    const comments = make();
+    const anchors: Anchor[] = [cell, { type: "slide", elementId: "e9" }, { type: "canvas", elementId: "c3" }];
+    for (const anchor of anchors) expect(comments.add({ anchor, body: "hi" }, ada).anchor).toEqual(anchor);
+    expect(comments.list({ anchorType: "slide" })).toHaveLength(1);
+  });
+
+  test("a custom anchor kind works, and cannot replace a built-in kind", () => {
+    const pin = {
+      type: "map-pin",
+      parse(raw: Record<string, unknown>) {
+        if (typeof raw.lat !== "number" || typeof raw.lng !== "number") throw new Error("lat and lng must be numbers");
+        return { type: "map-pin", lat: raw.lat, lng: raw.lng };
+      },
+    };
+    const comments = new Comments(new Y.Doc(), { now: clock, anchors: [pin] });
+    expect(comments.add({ anchor: { type: "map-pin", lat: 1, lng: 2 } as never, body: "here" }, ada).anchor).toEqual({ type: "map-pin", lat: 1, lng: 2 });
+    expect(code(() => comments.add({ anchor: { type: "map-pin", lat: "1", lng: 2 } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    expect(() => new Comments(new Y.Doc(), { anchors: [{ ...pin, type: "cell" }] })).toThrow(CommentsError);
+  });
+
+  test("a text anchor needs a real range and keeps the quoted text", () => {
+    const text = new Y.Doc().getText("t");
+    text.insert(0, "hello brave world");
+    expect(textAnchor(text, 6, 11).text).toBe("brave");
+    for (const [from, to] of [[5, 5], [6, 3], [-1, 4], [0, 99], [0.5, 3]]) {
+      expect(code(() => textAnchor(text, from, to))).toBe("INVALID_ANCHOR");
+    }
+  });
+
+  test("a text anchor follows its text when another replica edits before it", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    a.getText("t").insert(0, "hello brave world");
+    sync(a, b);
+    const anchor = textAnchor(a.getText("t"), 6, 11);
+    const thread = make(a).add({ anchor, body: "word choice?" }, ada);
+    sync(a, b);
+    b.getText("t").insert(0, "XX");
+    sync(a, b);
+    const stored = make(a).get(thread.id).anchor;
+    if (stored.type !== "text") throw new Error("expected a text anchor");
+    const from = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(stored.start), a);
+    expect(from?.index).toBe(8);
+  });
+});
+
+describe("thread lifecycle", () => {
+  test("a missing or odd thread id finds nothing", () => {
+    const comments = make();
+    for (const id of ["nope", "", "__proto__", "constructor", 7, null]) {
+      expect(code(() => comments.get(id as never))).toBe("NO_THREAD");
+      expect(code(() => comments.reply(id as never, { body: "x" }, ada))).toBe("NO_THREAD");
+      expect(code(() => comments.resolve(id as never, ada))).toBe("NO_THREAD");
+      expect(code(() => comments.reopen(id as never, ada))).toBe("NO_THREAD");
+    }
+  });
+
+  test("a reply to a resolved thread is refused until it is reopened", () => {
+    const comments = make();
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    comments.resolve(id, ada);
+    expect(code(() => comments.reply(id, { body: "late" }, bot))).toBe("THREAD_RESOLVED");
+    comments.reopen(id, ada);
+    comments.reply(id, { body: "now" }, bot);
+    expect(comments.get(id).messages.map((m) => m.body)).toEqual(["hi", "now"]);
+  });
+
+  test("resolve and reopen are idempotent and keep the first decider", () => {
+    const comments = make();
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    expect(comments.reopen(id, bot).statusBy.name).toBe("ada");
+    const first = comments.resolve(id, ada);
+    const again = comments.resolve(id, bot);
+    expect(again).toEqual(first);
+    expect(again.statusBy).toEqual({ kind: "human", name: "ada" });
+    expect(comments.reopen(id, bot).status).toBe("open");
+  });
+
+  test("list filters by status and sorts by first message", () => {
+    const comments = make();
+    const one = comments.add({ anchor: cell, body: "one" }, ada);
+    const two = comments.add({ anchor: cell, body: "two" }, bot);
+    comments.resolve(one.id, ada);
+    expect(comments.list().map((t) => t.id)).toEqual([one.id, two.id]);
+    expect(comments.list({ status: "open" }).map((t) => t.id)).toEqual([two.id]);
+    expect(comments.list({ status: "resolved" }).map((t) => t.id)).toEqual([one.id]);
+  });
+});
+
+describe("two replicas", () => {
+  const pair = () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const first = make(a).add({ anchor: cell, body: "start" }, ada);
+    sync(a, b);
+    return { a, b, ca: make(a), cb: make(b), id: first.id };
+  };
+
+  test("threads made on each side both survive", () => {
+    const { a, b, ca, cb } = pair();
+    ca.add({ anchor: { type: "canvas", elementId: "x" }, body: "from a" }, ada);
+    cb.add({ anchor: { type: "slide", elementId: "y" }, body: "from b" }, bot);
+    sync(a, b);
+    expect(ca.list()).toHaveLength(3);
+    expect(cb.list().map((t) => t.id)).toEqual(ca.list().map((t) => t.id));
+  });
+
+  test("concurrent replies are all kept, in one order, with their author kinds", () => {
+    const { a, b, ca, cb, id } = pair();
+    ca.reply(id, { body: "reply a" }, ada);
+    cb.reply(id, { body: "reply b" }, bot);
+    sync(a, b);
+    const seen = ca.get(id).messages.map((m) => `${m.author.kind}:${m.body}`);
+    expect(seen).toHaveLength(3);
+    expect(seen).toContain("agent_of_human:reply b");
+    expect(cb.get(id).messages).toEqual(ca.get(id).messages);
+  });
+
+  test("resolve against reopen ends in the same state on both", () => {
+    const { a, b, ca, cb, id } = pair();
+    ca.resolve(id, ada);
+    sync(a, b);
+    ca.reopen(id, ada);
+    cb.resolve(id, bot);
+    cb.reopen(id, bot);
+    cb.resolve(id, bot);
+    sync(a, b);
+    expect(cb.get(id)).toEqual(ca.get(id));
+  });
+
+  test("two resolves at once end with one resolver on both", () => {
+    const { a, b, ca, cb, id } = pair();
+    ca.resolve(id, ada);
+    cb.resolve(id, bot);
+    sync(a, b);
+    expect(cb.get(id).statusBy).toEqual(ca.get(id).statusBy);
+    expect(ca.get(id).status).toBe("resolved");
+  });
+
+  test("a malformed thread from a hostile replica is skipped and reported", () => {
+    const { a, ca, id } = pair();
+    const threads = a.getMap<Y.Map<unknown>>("comments.threads");
+    const evil = new Y.Map<unknown>();
+    threads.set("evil", evil);
+    evil.set("anchor", cell);
+    evil.set("state", { status: "open", by: { kind: "root", name: "x" }, at: "2026-01-01T00:00:00.000Z" });
+    const messages = new Y.Array<unknown>();
+    evil.set("messages", messages);
+    messages.push([{ id: "m", at: "2026-01-01T00:00:00.000Z", author: { name: "no-kind" }, body: "hi", mentions: [] }]);
+    expect(ca.list().map((t) => t.id)).toEqual([id]);
+    expect(ca.problems().map((p) => p.id)).toEqual(["evil"]);
+    expect(code(() => ca.get("evil"))).toBe("CORRUPT");
+  });
+});

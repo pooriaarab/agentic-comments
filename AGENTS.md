@@ -4,37 +4,36 @@ Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Mental model
 
-Text goes in. Stats or a route receipt come out. One core serves
-all three faces, so each face returns the same shape.
+A thread points at one place in a document, sheet, deck, or canvas. The place is
+an anchor. A thread holds messages. A person or an agent writes each message, and
+the host stamps who. A thread is open or resolved.
 
-## The three faces
+Threads live on a Yjs document. Replicas merge them without a server.
 
-- SDK: `import { summarizeText } from "agentic-comments"`.
-- CLI: `npx agentic-comments summary --text "..."`.
-- MCP: `npx agentic-comments mcp`, then call a tool below.
+## The SDK
 
-Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs,mcp.
+`import { Comments, stamp, textAnchor } from "agentic-comments"`.
 
-## MCP tools
+- `stamp({ kind, name })` makes the author. The host calls it for the principal it
+  authenticated. You never pass an author in an input.
+- `new Comments(ydoc)` reads and writes the threads on that document.
+- `add`, `reply`, `resolve`, `reopen`, `get`, `list`, `problems`.
 
-| Tool | Use it for |
-| --- | --- |
-| summarize_text | Count chars, words, lines, top words. |
-| dispatch_text | Route one text. Pass dryRun to preview. |
-| get_cost_report | Read session cost totals. |
+The CLI and MCP server are not built yet.
 
-## The loop
+## Anchors
 
-1. Discover the tools with `tools/list`.
-2. Run `summarize_text` on a sample.
-3. Preview a route with `dispatch_text` and dryRun true.
-4. Run the real route when the preview looks right.
-5. Read `get_cost_report` and state the cost.
+| Type | Fields | Points at |
+| --- | --- | --- |
+| `text` | `text`, `start`, `end` | A text range. Make it with `textAnchor`. |
+| `cell` | `key` | One cell. The host defines the key. |
+| `slide` | `elementId` | One element on a slide. |
+| `canvas` | `elementId` | One element on a canvas. |
 
 ## Rules
 
-- Preview with dry run before each real dispatch.
-- Stop when a guard denies the call. State the reason.
-- Never retry a denied call with changed text to dodge a guard.
-- Report adapter errors as errors. Never present them as success.
-- State the cost report before you claim the task is done.
+- Never claim an author. A write that carries an `author` key fails.
+- Never default an author kind. A missing kind is an error.
+- Reopen a resolved thread before you reply to it.
+- Report an error as an error. Do not retry with changed input to dodge it.
+- Treat a thread from `problems()` as bad data. Do not trust it.

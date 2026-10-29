@@ -9,27 +9,19 @@ Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Use the SDK
 
-```js
-import { summarizeText, dispatchText } from "agentic-comments";
+```ts
+import { Comments, stamp, textAnchor } from "agentic-comments";
 
-summarizeText("some text");
-await dispatchText("some text", { dryRun: true });
+const comments = new Comments(ydoc);
+const me = stamp({ kind: "agent_of_human", name: "scribe" });
+const thread = comments.add({ anchor: { type: "cell", key: "Sheet1!B4" }, body: "Check this total." }, me);
+comments.reply(thread.id, { body: "Fixed." }, me);
 ```
 
-## Use the CLI
-
-```sh
-agentic-comments summary --text "some text"
-agentic-comments dispatch --text "some text" --dry-run
-```
-
-## Use the MCP server
-
-Start the server with `agentic-comments mcp`. Call `summarize_text`
-for stats, `dispatch_text` for routes, `get_cost_report` for costs.
+The CLI and the MCP server are not built yet.
 
 ## Rules
 
-- Preview each route with dry run first.
-- Report guard denials and adapter errors as failures.
-- Read the cost report at the end.
+- The host stamps the author. Never pass one in an input.
+- Reopen a resolved thread before you reply.
+- Report refusals and errors as failures.

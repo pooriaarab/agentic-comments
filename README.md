@@ -7,33 +7,59 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: scaffold. This repository holds the starter code only. It is not on npm
-> yet, and none of the features below work yet.
+> Status: early. Only the thread model works. It is not on npm yet. Suggestions,
+> anchor survival, the CLI, the MCP server, and notifications come next.
 
-## Planned features
+## Install
 
-- Threads anchored to text ranges, cells, slides, or canvas elements.
-- Mentions, resolve, and reopen.
-- Suggested edits that a person accepts or rejects.
-- Every comment keeps its author kind, so agent comments are labeled.
-- Works on Yjs documents, so comments sync in real time.
-- An agent can never accept its own suggestion.
+```sh
+npm install agentic-comments yjs
+```
 
-## Surfaces
+## Quick start
 
-One package gives you each way in:
+```ts
+import * as Y from "yjs";
+import { Comments, stamp, textAnchor } from "agentic-comments";
 
-- **Library and SDK**: `import { ... } from "agentic-comments"`.
-- **CLI**: `npx agentic-comments --help`.
-- **MCP server**: `npx agentic-comments mcp`, for Claude Code and other MCP clients.
-- **HTTP API**: a Cloudflare Worker you deploy to your own account.
-- **Web UI**: a small app served by the same Worker.
+const doc = new Y.Doc();
+doc.getText("body").insert(0, "Hello brave world");
+
+const comments = new Comments(doc);
+const ada = stamp({ kind: "human", name: "ada" });
+const scribe = stamp({ kind: "agent_of_human", name: "scribe" });
+
+const thread = comments.add({ anchor: textAnchor(doc.getText("body"), 6, 11), body: "Word choice? @scribe" }, ada);
+comments.reply(thread.id, { body: "I suggest a shorter word." }, scribe);
+comments.resolve(thread.id, ada);
+```
+
+The `Comments` object lives on a Yjs document. Send the document updates with your
+normal sync, and every replica sees the same threads.
+
+## Features
+
+- Threads anchored to a text range, a cell key, a slide element, or a canvas element.
+  You can add your own anchor type.
+- A text anchor uses Yjs relative positions, so it follows its text through edits.
+- Messages with mentions. Resolve and reopen a thread.
+- The host stamps every author. An operation never reads an author from its input.
+- Every message keeps the author kind, so agent comments stay marked as machine-made.
+- Replies and status merge across replicas. Two replicas that resolve at once agree.
+- A malformed thread from a bad replica is skipped. `problems()` names it.
+
+## Limits
+
+- No suggestions yet. No file store, CLI, MCP server, or HTTP API yet.
+- A thread does not check that its anchor still exists. That check comes next.
+- The library trusts the host to call `stamp()` only for a principal it authenticated.
+- A reply to a resolved thread is refused. Reopen the thread first.
 
 ## Develop
 
 ```sh
 npm ci
-npm run build && npm run typecheck && npm test
+npm run ci:local
 ```
 
 ## License
