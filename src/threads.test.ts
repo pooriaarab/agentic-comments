@@ -15,6 +15,9 @@ import { Actor, authorLabel, Comments, CommentsError, PRINCIPAL_KINDS, stamp, te
 // 10. A write the library accepts cannot be read back, so a reply is lost without an error.
 // 11. A value changes between the check and the write, or a caller edits what it got back.
 // 12. A thread grows past a limit, or a peer fills it with junk, and replies stop.
+// 10. A write the library accepts cannot be read back, so a reply is lost without an error.
+// 11. A value changes between the check and the write, or a caller edits what it got back.
+// 12. A thread grows past a limit, or a peer fills it with junk, and replies stop.
 
 const ada = stamp({ kind: "human", name: "ada" });
 const bot = stamp({ kind: "agent_of_human", name: "scribe" });
