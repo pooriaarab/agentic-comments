@@ -11,7 +11,7 @@ Comment threads and suggestions anchored to any content, from people and agents.
 
 ## Install
 
-Requires Node.js 20 or later. `yjs` is a peer dependency. Your app and this package must use the same
+Requires Node.js 22 or later. `yjs` is a peer dependency. Your app and this package must use the same
 copy of `yjs`, because the package checks the Yjs types of your document. Install both:
 
 ```sh

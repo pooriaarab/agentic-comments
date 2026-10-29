@@ -16,6 +16,10 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 - The error codes `NO_DOCUMENT`, `DOCUMENT_EXISTS`, `CONFLICT`, and `MISCONFIGURED`.
 - `hono` and `agentic-identity` are now dependencies of the package.
 
+### Changed
+
+- **Breaking:** the package requires Node.js 22 or later. Before, it required Node.js 20.
+
 ### Fixed
 
 - `agentic-comments-mcp --help` prints help and exits 0. It also answers `--version`. Before, both ended in an
