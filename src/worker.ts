@@ -4,11 +4,12 @@ import { requirePrincipal, type RequirePrincipalOptions } from "agentic-identity
 import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudflare";
 import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
-import { ACCEPT_SCOPE } from "./suggestions.js";
-import { stamp, type Actor } from "./principal.js";
-import { MODERATE_SCOPE } from "./threads.js";
+import { ACCEPT_SCOPE, Suggestions } from "./suggestions.js";
+import type { CommentsAccountDocument } from "./account.js";
+import { ERASED_NAME, readAuthor, stamp, type Actor, type Author } from "./principal.js";
+import { Comments, MODERATE_SCOPE } from "./threads.js";
 import { CommentsService } from "./service.js";
-import { TEXT_ROOT } from "./local-host.js";
+import { localHost, TEXT_ROOT } from "./local-host.js";
 import { exact, invalid } from "./validate.js";
 
 export interface WorkerEnv {
@@ -187,6 +188,96 @@ export class CommentsDocs {
       await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
       return result;
     });
+  }
+
+  /** For the account plug-in: the id of each stored document. */
+  async accountDocumentIds(): Promise<string[]> {
+    return this.ids();
+  }
+
+  private async ids(): Promise<string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const { id } of page.items) ids.push(id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
+  }
+
+  /**
+   * For the account plug-in: runs `fn` on each stored document, with its `Comments` and `Suggestions`. With `save`,
+   * each document runs in one transaction and the state is written back there. A throw leaves it as it was. A document deleted since the list was read is skipped.
+   * A damaged document stops the run with CORRUPT.
+   */
+  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean, committed?: (id: string) => void): Promise<void> {
+    const open = (id: string, row: { state?: unknown } | null) => {
+      const ydoc = this.load(row, id);
+      ydoc.getText(TEXT_ROOT);
+      const comments = new Comments(ydoc);
+      return { ydoc, doc: { id, comments, suggestions: new Suggestions(comments, localHost) } };
+    };
+    for (const id of await this.ids()) {
+      if (!save) {
+        const row = await this.store.get(DOCS, id);
+        if (row !== null) fn(open(id, row).doc);
+        continue;
+      }
+      const wrote = await this.store.transaction(async (tx) => {
+        const row = (await tx.get(DOCS, id)) as { state?: unknown; createdBy?: unknown; createdAt?: unknown } | null;
+        if (row === null) return false;
+        const { ydoc, doc } = open(id, row);
+        fn(doc);
+        const state = Y.encodeStateAsUpdate(ydoc);
+        if (state.length > MAX_STATE) throw new CommentsError("STORE_FULL", `document "${id}" would pass ${MAX_STATE} bytes of state`);
+        await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
+        return true;
+      });
+      if (wrote) committed?.(id);
+    }
+  }
+
+  private async scan(author: Author, each: (id: string, row: { state?: unknown; createdBy?: unknown; createdAt?: unknown }) => Promise<void>, unread?: string[]): Promise<void> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const { id, data } of page.items) {
+        const raw = (data as { createdBy?: unknown } | null)?.createdBy;
+        const by = readAuthor(raw);
+        if (!by && raw !== null && raw !== undefined) unread?.push(id);
+        else if (by && by.kind === author.kind && by.name === author.name) await each(id, data as never);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+
+  /** The documents this subject created: the creator is kept on the row. For the account plug-in. */
+  async exportCreated(author: Author): Promise<{ documents: { documentId: string; createdAt: unknown }[]; unread: string[] }> {
+    const documents: { documentId: string; createdAt: unknown }[] = [];
+    const unread: string[] = [];
+    await this.scan(author, async (id, row) => void documents.push({ documentId: id, createdAt: row.createdAt ?? null }), unread);
+    return { documents, unread };
+  }
+
+  /** Give the creator of each document this subject made the tombstone name. Returns how many, and the rows it could not read. A repeat finds none. */
+  async eraseCreated(author: Author): Promise<{ count: number; unread: string[] }> {
+    const ids: string[] = [];
+    const unread: string[] = [];
+    await this.scan(author, async (id) => void ids.push(id), unread);
+    let count = 0;
+    for (const id of ids) {
+      // The count is made after the commit: a store may run the function again, so it holds no side effect.
+      const changed = await this.store.transaction(async (tx) => {
+        const row = (await tx.get(DOCS, id)) as { createdBy?: unknown } | null;
+        const by = readAuthor(row?.createdBy);
+        if (!row || !by || by.kind !== author.kind || by.name !== author.name) return false;
+        await tx.put(DOCS, id, { ...row, createdBy: { kind: by.kind, name: ERASED_NAME } } as never);
+        return true;
+      });
+      if (changed) count++;
+    }
+    return { count, unread };
   }
 }
 

@@ -86,6 +86,36 @@ erased message or a thread that holds one.
 Replicas that edit one message at once leave a copy each. When the copies agree on the author kind and time,
 the read keeps the erased copy, or else the latest edit. An edit and a delete made at once keep the edit.
 
+## Account export and erase
+
+`import { commentsAccount } from "agentic-comments/account"` lets a host export and erase one person's data
+without reading the storage layout. Pass the subject (`{ kind, name }`) and `{ documents, actor }`. Each
+document is `{ id, comments, suggestions }`. The actor is made with `stamp()` and must name the subject.
+`exportAccount` returns JSON records in `messages`, `statusChanges`, `edits`, `suggestions`, `decisions`,
+`documents`, and `unread`. `eraseAccount` tombstones the same data as `erasePerson` and returns counts. A second
+erase counts 0, except `unread`: see below.
+
+The package keeps no grants or audit rows. A host that runs the HTTP worker passes `worker: docs` (the
+`CommentsDocs` of the worker). Then the run also covers every stored document: the subject's messages and
+suggestions in it, and the creator that the worker keeps on each row. The creators are listed under `documents`
+and get the tombstone name on erase. Without `worker`, that data stays. A stored document is erased in one
+transaction. A stored document that `documents` also lists is refused, before any write. The check compares ids
+only. A row whose creator cannot be read shows in `unread` of the export, and in the `unread` count of the erase,
+which leaves the row in place. `unread` counts every row it cannot read, whoever made it, so it can stay above 0 on a repeat. A store that loses a race gives `CONFLICT`: run the erase again.
+
+A run covers only the subject's own kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions of
+the subject inside other people's messages are neither exported nor erased. Records can name other people, such
+as the moderator in `editedBy` or the person in `decidedBy`. A record in `unread` means the export is not
+complete: the store holds entries of the subject that a read cannot show. A missing `documents` list is an
+error, not an empty run. Erase goes document by document. If one fails, the error code tells why, the message names the document when the store allows, and the earlier
+documents stay erased. A failed document in `documents` may be partly erased (its threads and its suggestions
+are two steps). A repeat counts only what is left. The counts of a failed run are lost.
+
+The ids in `documents` and the ids of the worker share one namespace. Erase can make a state a little larger, so a stored
+document near the size limit may stop the run with `STORE_FULL`: the host must shrink or delete that document, and
+run the erase again. The run reads the list of stored documents once. Block the subject before the erase, so no
+document is made during it. A repeat erase finishes what a race left.
+
 ## Anchors for plain text
 
 `agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.

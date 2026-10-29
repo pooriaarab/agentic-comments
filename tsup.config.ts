@@ -10,6 +10,7 @@ export default defineConfig({
     index: "src/index.ts",
     local: "src/local.ts",
     anchoring: "src/anchoring.ts",
+    account: "src/account.ts",
     worker: "src/worker.ts",
     client: "src/client.ts",
     cli: "src/cli.ts",

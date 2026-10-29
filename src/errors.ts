@@ -26,8 +26,9 @@ export class CommentsError extends Error {
   constructor(
     readonly code: CommentsErrorCode,
     message: string,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = "CommentsError";
   }
 }

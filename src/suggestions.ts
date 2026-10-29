@@ -125,7 +125,8 @@ export class Suggestions {
   private failures: { id: string; reason: string }[] = [];
 
   constructor(
-    private readonly comments: Comments,
+    /** The threads these suggestions anchor to. */
+    readonly comments: Comments,
     private readonly host: SuggestionHost,
   ) {
     if (typeof host?.apply !== "function" || (typeof host.revert !== "function" && host.idempotent !== true)) {
