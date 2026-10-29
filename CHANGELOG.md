@@ -2,6 +2,14 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.8.4
+
+Patch. No change to the SDK, the HTTP API, or the MCP tools.
+
+### Changed
+
+- The `agentic-design` dependency is `^0.8.0`. It was `^0.5.0`, which does not accept 0.8.0. So the agentic-* packages could not install together (ERESOLVE). The panel uses only components and `--agd-*` tokens that 0.8.0 still exports, so the code needs no change.
+
 ## 0.8.3
 
 ### Changed
