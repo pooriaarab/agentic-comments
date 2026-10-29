@@ -16,6 +16,10 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 - The error codes `NO_DOCUMENT`, `DOCUMENT_EXISTS`, `CONFLICT`, and `MISCONFIGURED`.
 - `hono` and `agentic-identity` are now dependencies of the package.
 
+### Changed
+
+- **Breaking:** the package requires Node.js 22 or later. Before, it required Node.js 20.
+
 ### Fixed
 
 - `agentic-comments-mcp --help` prints help and exits 0. It also answers `--version`. Before, both ended in an
@@ -45,7 +49,6 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
   still works.
 - `CommentsErrorCode` has new values: `STORE_MISSING`, `STORE_EXISTS`, `STORE_CORRUPT`, `STORE_LOCKED`,
   `STORE_FULL`, and `USAGE`. If you check the code with an exhaustive `switch`, add these cases.
-- **Breaking:** the package requires Node.js 22 or later. Before, it required Node.js 20.
 
 ### Fixed
 
