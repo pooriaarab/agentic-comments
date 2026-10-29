@@ -19,6 +19,10 @@ Threads live on a Yjs document. Replicas merge them without a server.
 - `new Comments(ydoc)` reads and writes the threads on that document.
 - `add`, `reply`, `resolve`, `reopen`, `get`, `list`, `problems`.
 
+Anchor state: every thread and suggestion has `anchorState` (attached, edited, orphaned, unknown).
+An orphaned thread stays readable and takes replies. `comments.relocate(id, actor)` moves a text anchor to
+its quote when the quote occurs exactly once. Accept refuses an orphaned or edited anchor.
+
 Suggestions: `new Suggestions(comments, host)`, then `add`, `accept`, `reject`, `get`, `list`,
 `problems`. `settle` and `close` are for the host. The host
 owns the change and the `apply` hook. An agent accepts only with the `comments:accept` scope, and never

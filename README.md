@@ -6,8 +6,8 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Threads and suggestions work. It is not on npm yet. Anchor survival, the CLI, the
-> MCP server, and notifications come next.
+> Status: early. Threads, suggestions, and anchor survival work. It is not on npm yet. The CLI, the MCP
+> server, and notifications come next.
 
 ## Install
 
@@ -52,6 +52,27 @@ normal sync, and every replica sees the same threads.
 - Replies and status merge across replicas. Two replicas that resolve at once agree.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
+
+## When the content changes
+
+Every thread and suggestion has an `anchorState`:
+
+| State | Meaning |
+| --- | --- |
+| `attached` | The content is there, as it was. |
+| `edited` | A text range is there, with other text. `currentText` shows it. |
+| `orphaned` | The content is gone. The thread stays readable and takes replies. |
+| `unknown` | Nothing can tell. A cell, slide, canvas, or custom anchor has no host answer. |
+
+- A text anchor follows its text through edits by any replica. Deleting the whole range orphans it.
+- For other anchors, pass `exists(anchor)` to `new Comments`. Return `true` or `false`. Any other answer,
+  or a throw, means `unknown`.
+- `list({ anchorState: "orphaned" })` finds threads to review.
+- `relocate(threadId, actor)` moves a text anchor to its quote when the quote occurs exactly once in the
+  same text. It never guesses. It throws `RELOCATE_FAILED` for no match or many.
+- Accept refuses a suggestion whose anchor is orphaned or edited. The suggestion stays pending, and a
+  person can reject it.
+- `currentText` is document text. It can hold any character, so a UI should treat it as untrusted.
 
 ## Suggestions
 
@@ -117,13 +138,14 @@ suggestions.accept(s.id, ada);
 ## Limits
 
 - No file store, CLI, MCP server, or HTTP API yet.
-- `add` checks that a text anchor points into this document and matches its quote. A thread does not
-  check later that its anchor still exists. That check comes next.
+- `add` checks that a text anchor points into this document and matches its quote.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
 - A reply to a resolved thread is refused on the replica that sees the resolve. A reply and a
   resolve made at once on two replicas both stay. The merged thread is resolved and holds the reply.
 - Author and kind are only as trustworthy as every peer that can write the document. A peer can write
   any author straight into the Yjs data. The sync layer must decide who may write.
+- `relocate` and `exists` never touch a thread whose anchor is attached. `exists` runs for every thread
+  on every read, so keep it fast.
 - A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows the first
   2,000 valid messages. `skipped` and `problems()` report the rest.
 - Every replica of a document must register the same custom anchor kinds.

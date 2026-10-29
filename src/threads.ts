@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { BUILT_IN_KINDS, MAX_ANCHOR, textOf, type Anchor, type AnchorKind } from "./anchor.js";
+import { BUILT_IN_KINDS, MAX_ANCHOR, onlyOccurrence, textAnchor, textOf, textRange, textState, type Anchor, type AnchorKind, type AnchorState } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown, VARIATION } from "./text.js";
@@ -25,6 +25,8 @@ export interface Thread {
   statusBy: Author;
   statusAt: string;
   messages: Message[];
+  /** Whether the anchored content is still there. A thread whose content is gone stays readable. */
+  anchorState: AnchorState;
   /** How many stored entries this read did not show: invalid ones, repeated ids, and valid ones past the read limit. `problems()` names them. */
   skipped: number;
 }
@@ -33,6 +35,11 @@ export interface CommentsOptions {
   now?: () => Date;
   /** More anchor types. A type that is already built in is refused. */
   anchors?: AnchorKind[];
+  /**
+   * Tell whether the content a cell, slide, canvas, or custom anchor points at still exists. Return `true`
+   * or `false`. Any other answer, or a throw, means unknown. Text anchors do not need it.
+   */
+  exists?: (anchor: Anchor) => boolean | undefined;
 }
 
 export interface NewThread {
@@ -51,6 +58,7 @@ export interface ThreadFilter {
   anchorType?: string;
   /** A handle, with or without the `@`. */
   mentioning?: string;
+  anchorState?: AnchorState["state"];
 }
 
 const THREADS = "comments.threads";
@@ -63,6 +71,7 @@ const MAX_MENTIONS = 50;
 const MAX_MESSAGES = 1_000;
 const READ_LIMIT = 2 * MAX_MESSAGES;
 const STATUSES = ["open", "resolved"];
+const ANCHOR_STATES = ["attached", "edited", "orphaned", "unknown"];
 const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}_.-]{0,62}[\p{L}\p{N}\p{M}])?$/u;
 const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)(?![\p{L}\p{N}\p{M}_.-]|\/)/gu;
 
@@ -105,16 +114,18 @@ function mentionsOf(text: string, explicit: unknown): string[] {
 export class Comments {
   private readonly kinds = new Map<string, AnchorKind>();
   private readonly now: () => Date;
+  private readonly exists?: (anchor: Anchor) => boolean | undefined;
 
   /** Every replica of a document must register the same custom anchor kinds. Others read those threads as malformed. */
   constructor(
     readonly ydoc: Y.Doc,
     options: CommentsOptions = {},
   ) {
-    if (typeof options !== "object" || options === null || (options.now !== undefined && typeof options.now !== "function") || (options.anchors !== undefined && !Array.isArray(options.anchors))) {
-      invalid("options must be an object with an optional now function and an optional anchors list");
+    if (typeof options !== "object" || options === null || (options.now !== undefined && typeof options.now !== "function") || (options.anchors !== undefined && !Array.isArray(options.anchors)) || (options.exists !== undefined && typeof options.exists !== "function")) {
+      invalid("options must be an object with an optional now function, anchors list, and exists function");
     }
     this.now = options.now ?? (() => new Date());
+    this.exists = options.exists;
     for (const kind of [...BUILT_IN_KINDS, ...(options.anchors ?? [])]) {
       if (typeof kind?.type !== "string" || kind.type === "" || typeof kind.parse !== "function" || this.kinds.has(kind.type)) {
         throw new CommentsError("INVALID_ANCHOR", `the anchor type "${String(kind?.type)}" is empty, has no parse, or is already defined`);
@@ -133,6 +144,18 @@ export class Comments {
     const text = at instanceof Date && !Number.isNaN(at.getTime()) ? at.toISOString() : "";
     if (!ISO_TIME.test(text)) invalid("the clock must return a date between the years 0000 and 9999");
     return text;
+  }
+
+  /** Whether the content under an anchor is still there. This never throws. */
+  anchorState(anchor: Anchor): AnchorState {
+    if (anchor.type === "text") return textState(anchor, this.ydoc);
+    if (!this.exists) return { state: "unknown" };
+    try {
+      const answer = this.exists(anchor);
+      return answer === true ? { state: "attached" } : answer === false ? { state: "orphaned" } : { state: "unknown" };
+    } catch {
+      return { state: "unknown" };
+    }
   }
 
   /** Read an anchor from stored data. This does not check the document. */
@@ -233,7 +256,8 @@ export class Comments {
       });
       if (past > 0) issues.push(`${past} valid messages past the read limit are not shown`);
       if (messages.length === 0) throw new Error("the thread has no valid message");
-      const thread: Thread = { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length };
+      const anchor = this.parseAnchor(fields.get("anchor"));
+      const thread: Thread = { id, anchor, anchorState: this.anchorState(anchor), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length };
       return { thread, issues };
     } catch (error) {
       throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${safeText(error instanceof Error ? error.message : error)}`);
@@ -291,6 +315,27 @@ export class Comments {
     return this.get(id);
   }
 
+  /**
+   * Move a text anchor whose range is gone or edited to its quote, when the quote occurs exactly once in
+   * the same text. There is no fuzzy match. Throws `RELOCATE_FAILED` when it cannot say where. An attached
+   * thread is returned as it is.
+   */
+  relocate(threadId: string, actor: Actor): Thread {
+    assertActor(actor);
+    const { id, fields } = this.fields(threadId);
+    const { thread } = this.read(id, fields);
+    const anchor = thread.anchor;
+    if (anchor.type !== "text") return invalid("only a text anchor can be relocated");
+    if (thread.anchorState.state === "attached") return thread;
+    const range = textRange(anchor, this.ydoc);
+    const at = range ? onlyOccurrence(range.type, anchor.text) : undefined;
+    if (!range || at === undefined) {
+      throw new CommentsError("RELOCATE_FAILED", `the quoted text does not occur exactly once, so thread ${shown(id)} cannot be moved`);
+    }
+    fields.set("anchor", textAnchor(range.type, at, at + anchor.text.length));
+    return this.get(id);
+  }
+
   resolve(threadId: string, actor: Actor): Thread {
     return this.setStatus(threadId, "resolved", actor);
   }
@@ -306,14 +351,16 @@ export class Comments {
 
   /** Threads in the order they were started. A malformed thread is skipped; `problems()` names it. */
   list(filter: ThreadFilter = {}): Thread[] {
-    const given = exact(filter, ["status", "anchorType", "mentioning"], "a filter");
+    const given = exact(filter, ["status", "anchorType", "mentioning", "anchorState"], "a filter");
     if (given.status !== undefined && !STATUSES.includes(given.status as string)) invalid(`status must be ${STATUSES.join(" or ")}`);
     if (given.anchorType !== undefined && typeof given.anchorType !== "string") invalid("anchorType must be text");
     if (given.mentioning !== undefined && typeof given.mentioning !== "string") invalid("mentioning must be text");
+    if (given.anchorState !== undefined && !ANCHOR_STATES.includes(given.anchorState as string)) invalid(`anchorState must be ${ANCHOR_STATES.join(", ")}`);
     const wanted = given.mentioning === undefined ? undefined : handle(given.mentioning as string);
     return this.readAll()
       .threads.filter((t) => given.status === undefined || t.status === given.status)
       .filter((t) => given.anchorType === undefined || t.anchor.type === given.anchorType)
+      .filter((t) => given.anchorState === undefined || t.anchorState.state === given.anchorState)
       .filter((t) => wanted === undefined || t.messages.some((m) => m.mentions.includes(wanted)))
       .sort((a, b) => Date.parse(a.messages[0].at) - Date.parse(b.messages[0].at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
