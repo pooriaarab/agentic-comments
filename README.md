@@ -18,8 +18,6 @@ copy of `yjs`, because the package checks the Yjs types of your document. Instal
 npm install agentic-comments yjs
 ```
 
-To build from source, see Develop.
-
 ## Quick start
 
 ```ts
@@ -165,10 +163,6 @@ machine. It cannot check a lock held in another container or on another machine.
 share a volume can have the same process id, and each then clears the other's lock, so they can lose writes. A save that
 would pass 50 MB is refused.
 
-If the version you install has no `agentic-comments` command, build from source (see [Develop](#develop)).
-In the cloned repo, run `npm run build` and use `node dist/cli.js` where these examples say
-`npx agentic-comments`.
-
 ```sh
 export AGENTIC_COMMENTS_FILE=./comments.ydoc
 export AGENTIC_COMMENTS_AS=human:ada          # kind:name. The operator sets this.
@@ -180,7 +174,7 @@ npx agentic-comments accept <id>
 ```
 
 - Commands: `init`, `list`, `show`, `comment`, `reply`, `resolve`, `reopen`, `relocate`, `suggestions`,
-  `suggest`, `accept`, `reject`, `mcp`. Run `agentic-comments --help` for flags.
+  `suggest`, `accept`, `reject`, `mcp`. Run `npx agentic-comments --help` for flags.
 - Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
   exits 2.
 - The principal comes from `--as` or `AGENTIC_COMMENTS_AS`. Scopes come only from
