@@ -1,8 +1,8 @@
 import * as Y from "yjs";
-import { BUILT_IN_KINDS, textOf, type Anchor, type AnchorKind } from "./anchor.js";
+import { BUILT_IN_KINDS, MAX_ANCHOR, textOf, type Anchor, type AnchorKind } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
-import { BODY_FORBIDDEN, ID, safeId, shown, VARIATION } from "./text.js";
+import { BODY_FORBIDDEN, ID, safeId, safeText, shown, VARIATION } from "./text.js";
 
 export interface Message {
   id: string;
@@ -61,7 +61,6 @@ const MAX_MENTIONS = 50;
  */
 const MAX_MESSAGES = 1_000;
 const READ_LIMIT = 2 * MAX_MESSAGES;
-const MAX_ANCHOR = 4_096;
 const STATUSES = ["open", "resolved"];
 const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}_.-]{0,62}[\p{L}\p{N}\p{M}])?$/u;
 const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)(?![\p{L}\p{N}\p{M}_.-]|\/)/gu;
@@ -86,7 +85,7 @@ function body(value: unknown): string {
   return value as string;
 }
 
-/** Handles match without case, without leading `@`, and across Unicode forms. They are stored in this form. */
+/** Handles are lowercased, lose any leading `@`, and use one Unicode form. They are stored in this form. */
 const handle = (value: string): string => value.normalize("NFC").replace(/^@+/, "").toLowerCase().normalize("NFC");
 
 const okHandle = (value: string): boolean => HANDLE.test(value) && !VARIATION.test(value);
@@ -121,8 +120,8 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 /** Like `copy`, but refuses what JSON would quietly change: `undefined`, NaN, and Infinity. */
 const strictCopy = <T>(value: T): T =>
   JSON.parse(
-    JSON.stringify(value, (key, v: unknown) => {
-      if (v === undefined || (typeof v === "number" && !Number.isFinite(v))) throw new Error(`"${key}" is not valid JSON data`);
+    JSON.stringify(value, (_key, v: unknown) => {
+      if (v === undefined || (typeof v === "number" && !Number.isFinite(v))) throw new Error("an anchor value is not valid JSON data");
       return v;
     }),
   ) as T;
@@ -242,7 +241,7 @@ export class Comments {
           if (messages.length >= READ_LIMIT) past++;
           else messages.push(message);
         } catch (error) {
-          issues.push(`message ${index} skipped: ${(error as Error).message}`);
+          issues.push(`message ${index} skipped: ${safeText((error as Error).message)}`);
         }
       });
       if (past > 0) issues.push(`${past} valid messages past the read limit are not shown`);
@@ -250,7 +249,7 @@ export class Comments {
       const thread: Thread = { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length };
       return { thread, issues };
     } catch (error) {
-      throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${safeText(error instanceof Error ? error.message : error)}`);
     }
   }
 

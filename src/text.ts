@@ -19,3 +19,6 @@ export const safeId = (value: unknown): string => String(value).slice(0, 64).rep
 
 /** A short quote of an untrusted id for an error message. */
 export const shown = (value: unknown): string => JSON.stringify(safeId(value));
+
+/** A reason from stored data made safe to show: letters, digits, punctuation, symbols, and spaces only, cut to 200 characters. */
+export const safeText = (value: unknown): string => String(value).replace(/[^\p{L}\p{N}\p{P}\p{S} ]/gu, "?").slice(0, 200);

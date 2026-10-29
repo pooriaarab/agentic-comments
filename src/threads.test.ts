@@ -815,4 +815,51 @@ describe("limits and names", () => {
     expect(code(() => comments.add({ anchor: cell, body: "hi", mentions: ["ad\uFE0Fa"] }, ada))).toBe("INVALID_INPUT");
     expect(code(() => comments.add({ anchor: cell, body: "hi @ad\uFE0Fa" }, ada))).toBe("INVALID_INPUT");
   });
+
+  test("a peer cannot put its own text or a long text into a reason or an error", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "real" }, ada);
+    const hostile = { type: "cell", key: "A1", ["\u202Eevil " + "X".repeat(5_000)]: undefined };
+    doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.set("anchor", hostile);
+    const reason = comments.problems()[0].reason;
+    expect(reason.length).toBeLessThan(300);
+    expect(reason).not.toMatch(/[\u202E]|evil|XXXX/);
+    try {
+      comments.get(id);
+    } catch (error) {
+      expect((error as Error).message).not.toMatch(/[\u202E]|evil|XXXX/);
+      expect((error as Error).message.length).toBeLessThan(400);
+    }
+  });
+
+  test("a text anchor that textAnchor makes is one that add accepts", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    text.insert(0, '"'.repeat(2_000));
+    expect(code(() => textAnchor(text, 0, 2_000))).toBe("INVALID_ANCHOR");
+    const ok = textAnchor(text, 0, 200);
+    expect(make(doc).add({ anchor: ok, body: "x" }, ada).anchor).toEqual(ok);
+  });
+
+  test("an author name refuses variation selectors", () => {
+    expect(code(() => stamp({ kind: "human", name: "ada\uFE0F" }))).toBe("INVALID_AUTHOR");
+  });
+
+  test("a custom kind that echoes stored data cannot put it into a reason", () => {
+    const echo = {
+      type: "echo",
+      parse(raw: Record<string, unknown>) {
+        if (raw.ok !== true) throw new Error(`bad anchor ${String(raw.note)}`);
+        return { type: "echo", ok: true };
+      },
+    };
+    const doc = new Y.Doc();
+    const comments = new Comments(doc, { now: clock, anchors: [echo] });
+    const { id } = comments.add({ anchor: { type: "echo", ok: true } as never, body: "x" }, ada);
+    doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.set("anchor", { type: "echo", ok: false, note: "\u202E" + "N".repeat(5_000) });
+    const reason = comments.problems()[0].reason;
+    expect(reason).not.toMatch(/\u202E/);
+    expect(reason.length).toBeLessThan(300);
+  });
 });

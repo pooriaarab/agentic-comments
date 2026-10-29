@@ -47,6 +47,8 @@ export interface AnchorKind {
 }
 
 export const MAX_QUOTE = 2_000;
+/** The most JSON characters one stored anchor holds. */
+export const MAX_ANCHOR = 4_096;
 const MAX_KEY = 256;
 
 const bad = (message: string): never => {
@@ -88,7 +90,9 @@ const parseText = (raw: Record<string, unknown>): TextAnchor => {
   const owner = (p: RelativePositionJson) => JSON.stringify([p.type ?? null, p.tname ?? null]);
   if (start.item === undefined || end.item === undefined) bad("a text range needs an item position at each end");
   if ((start.type && start.tname) || (end.type && end.tname) || owner(start) !== owner(end)) bad("both ends of a text range must name the same Yjs type");
-  return { type: "text", text: raw.text as string, start, end };
+  const anchor: TextAnchor = { type: "text", text: raw.text as string, start, end };
+  if (JSON.stringify(anchor).length > MAX_ANCHOR) bad(`an anchor holds up to ${MAX_ANCHOR} characters of JSON, so the quoted text is too long`);
+  return anchor;
 };
 
 export const BUILT_IN_KINDS: readonly AnchorKind[] = [
