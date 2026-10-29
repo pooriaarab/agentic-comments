@@ -6,7 +6,7 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ### Changed
 
-- The `agentic-identity` dependency is `^0.9.0`, the current release. It was `^0.8.0`. The package needs no code change. Below 1.0, `^0.9.0` does not accept 0.8.x, so a host that pins `agentic-identity@0.8.x` gets a second copy of it. Move the host's pin to `^0.9.0`.
+- The `agentic-identity` dependency is `^0.9.0`, the current release. It was `^0.8.0`. The package needs no code change. Below 1.0, `^0.9.0` does not accept 0.8.x, so a host that pins `agentic-identity@0.8.x` gets a second copy of it. Move the host's pin to `^0.9.0`. With two copies, a store conflict from the host's copy is not recognised, so the Worker returns a server error instead of a 409 conflict.
 
 ## 0.8.0
 
