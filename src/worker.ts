@@ -211,7 +211,7 @@ export class CommentsDocs {
    * each document runs in one transaction and the state is written back there. A throw leaves it as it was. A document deleted since the list was read is skipped.
    * A damaged document stops the run with CORRUPT.
    */
-  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void> {
+  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean, committed?: (id: string) => void): Promise<void> {
     const open = (id: string, row: { state?: unknown } | null) => {
       const ydoc = this.load(row, id);
       ydoc.getText(TEXT_ROOT);
@@ -224,15 +224,17 @@ export class CommentsDocs {
         if (row !== null) fn(open(id, row).doc);
         continue;
       }
-      await this.store.transaction(async (tx) => {
+      const wrote = await this.store.transaction(async (tx) => {
         const row = (await tx.get(DOCS, id)) as { state?: unknown; createdBy?: unknown; createdAt?: unknown } | null;
-        if (row === null) return;
+        if (row === null) return false;
         const { ydoc, doc } = open(id, row);
         fn(doc);
         const state = Y.encodeStateAsUpdate(ydoc);
         if (state.length > MAX_STATE) throw new CommentsError("STORE_FULL", `document "${id}" would pass ${MAX_STATE} bytes of state`);
         await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
+        return true;
       });
+      if (wrote) committed?.(id);
     }
   }
 

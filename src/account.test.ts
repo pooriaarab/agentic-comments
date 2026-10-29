@@ -111,10 +111,8 @@ describe("commentsAccount", () => {
     b.comments.erasePerson = () => {
       throw new Error("plain");
     };
-    const plain = await commentsAccount.eraseAccount(ada, { documents: [{ ...b, id: "d2" }], actor: ada }).catch((e) => e);
-    expect(plain).toBeInstanceOf(CommentsError);
-    expect(plain.message).toContain('document "d2": plain');
-    expect(plain.cause).toBeInstanceOf(Error);
+    // A failure that is not ours goes up as it is: it is not named damaged data.
+    await expect(commentsAccount.eraseAccount(ada, { documents: [{ ...b, id: "d2" }], actor: ada })).rejects.toThrow("plain");
   });
 
   test("a worker host: export and erase reach the threads and the creator of every stored document", async () => {

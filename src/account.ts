@@ -19,8 +19,8 @@ export interface CommentsAccountDocument {
 export interface AccountWorker {
   /** The id of each stored document. */
   accountDocumentIds(): Promise<string[]>;
-  /** Runs `fn` on each stored document. With `save`, the state is written back in the same transaction. A document deleted meanwhile is skipped. */
-  eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void>;
+  /** Runs `fn` on each stored document. With `save`, the state is written back in the same transaction. A document deleted meanwhile is skipped. `committed` is called with the id after its transaction commits. */
+  eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean, committed?: (id: string) => void): Promise<void>;
   /** The documents the subject created. `unread` names the rows whose creator cannot be read, so the export is not complete for them. */
   exportCreated(author: Author): Promise<{ documents: { documentId: string; createdAt: unknown }[]; unread: string[] }>;
   /** `count` is the creators it tombstoned. `unread` names the rows whose creator cannot be read, which it leaves in place. */
@@ -111,8 +111,10 @@ async function stopAt<T>(where: string, run: () => Promise<T> | T): Promise<T> {
   } catch (cause) {
     const known = cause instanceof CommentsError;
     const reason = cause instanceof Error ? cause.message : "unknown error";
+    // A store failure that is not a lost race is not ours to name: it goes up as it is, with no code of ours.
+    if (!known && !(cause instanceof StoreConflictError)) throw cause;
     // A store that lost a race is not damaged data: the caller runs the erase again.
-    throw new CommentsError(known ? cause.code : cause instanceof StoreConflictError ? "CONFLICT" : "CORRUPT", `erase stopped at ${where}: ${reason}`, { cause });
+    throw new CommentsError(known ? cause.code : "CONFLICT", `erase stopped at ${where}: ${reason}`, { cause });
   }
 }
 
@@ -156,14 +158,16 @@ export const commentsAccount: CommentsAccount = {
       // A stop inside one stored document rolls that document back, so it is never half erased.
       // The counts are kept per document id, so a transaction that the store runs again does not count twice.
       const each = new Map<string, Counts>();
+      const done = new Set<string>();
       await stopAt("a worker document", () =>
         deps.worker!.eachAccountDocument((doc) => {
           const one: Counts = { messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0, unread: 0 };
           wipe(doc, own, one);
           each.set(doc.id, one);
-        }, true),
+        }, true, (id) => void done.add(id)),
       );
-      for (const c of each.values()) for (const k of Object.keys(counts) as (keyof Counts)[]) counts[k] += c[k];
+      // Only a document whose transaction committed counts: an attempt that was run again or never committed does not.
+      for (const [id, c] of each) if (done.has(id)) for (const k of Object.keys(counts) as (keyof Counts)[]) counts[k] += c[k];
       const creators = await stopAt("the worker creators", () => deps.worker!.eraseCreated(own));
       counts.documents = creators.count;
       counts.unread = creators.unread.length;
