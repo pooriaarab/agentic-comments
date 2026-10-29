@@ -6,12 +6,13 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: first release, 0.1.0. Threads, suggestions, and anchor survival work. The CLI, the MCP
-> server, and notifications come next.
+> Status: see [npm](https://www.npmjs.com/package/agentic-comments) for the latest version. Threads,
+> suggestions, and anchor survival work. The CLI, the MCP server, and notifications come next.
 
 ## Install
 
-Requires Node.js 20 or later. The quick start imports `yjs`, so install it with this package:
+Requires Node.js 20 or later. `yjs` is a peer dependency. Your app and this package must use the same
+copy of `yjs`, because the package checks the Yjs types of your document. Install both:
 
 ```sh
 npm install agentic-comments yjs

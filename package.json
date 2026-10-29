@@ -48,15 +48,17 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist",
+    "prepack": "npm run build",
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
-  "dependencies": {
+  "peerDependencies": {
     "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "yjs": "^13.6.0"
   }
 }
