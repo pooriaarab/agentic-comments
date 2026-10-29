@@ -20,7 +20,7 @@ function setup() {
   const seen: { url: string; init: RequestInit }[] = [];
   const handler = ((input: string, init: RequestInit) => {
     seen.push({ url: input, init });
-    return Promise.resolve(app.request(input, init, { AGENTIC_COMMENTS_TOKENS: TOKENS }));
+    return Promise.resolve(app.request(input, init, { AGENTIC_COMMENTS_TOKENS: TOKENS, AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS: "1" }));
   }) as unknown as typeof fetch;
   const as = (token: string): CommentsClient => createClient({ baseUrl: "https://comments.test", token, fetch: handler });
   return { as, seen, handler };

@@ -1,8 +1,6 @@
 {
-  // Set tokens as a secret, never in this file:
-  //   wrangler secret put AGENTIC_COMMENTS_TOKENS
-  // The value is JSON from a token of 32 bytes or more to a principal, for example
-  // {"<output of openssl rand -hex 32>":"agent_of_human:scribe"}. A shorter token refuses the whole config.
+  // Auth is agentic-identity: principals and credentials live in the D1 database (issue them with issueCredential).
+  // A static token list is a dev fallback: set the secret AGENTIC_COMMENTS_TOKENS and AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS=1. Never in production.
   // Also set the region claim: wrangler secret put AGENTIC_COMMENTS_REGION  (the value is "eu" or "us").
   "name": "agentic-comments",
   "main": "dist/worker.js",

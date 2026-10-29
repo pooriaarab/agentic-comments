@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { PrincipalParseError, StoreConflictError, assertRegion, isScope, parseRegion, hasScope, parsePrincipal, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
+import { PrincipalParseError, StoreConflictError, assertRegion, createStoreAuth, isScope, parseRegion, hasScope, parsePrincipal, type Auth, type PrincipalContext, type Region, type Scope, type Store } from "agentic-identity";
 import { requirePrincipal, type RequirePrincipalOptions } from "agentic-identity/http";
 import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudflare";
 import * as Y from "yjs";
@@ -18,8 +18,10 @@ export interface WorkerEnv {
   AGENTIC_COMMENTS_UNSAFE_REGION?: string;
   /** D1 database: each document, with its threads, as a Yjs update. */
   DB?: D1Like;
+  /** Set to "1" to read `AGENTIC_COMMENTS_TOKENS`. Without it the list never signs anyone in, and a request gets 503 when the list is set. A dev fallback: never set it in production. */
+  AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS?: string;
   /**
-   * JSON object: bearer token (32 to 512 bytes of A-Z a-z 0-9 _ -) to `kind:name` (the name uses A-Z a-z 0-9 . _ -), or to `{ "as": "kind:name", "scopes": ["comments:write"] }`.
+   * Dev fallback, read only when `AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS` is "1". It is tried after the identity credentials. JSON object: bearer token (32 to 512 bytes of A-Z a-z 0-9 _ -) to `kind:name` (the name uses A-Z a-z 0-9 . _ -), or to `{ "as": "kind:name", "scopes": ["comments:write"] }`.
    * Set it as a secret. A short token or a bad entry refuses the whole config.
    */
   AGENTIC_COMMENTS_TOKENS?: string;
@@ -134,7 +136,7 @@ const fromBase64 = (text: string): Uint8Array => Uint8Array.from(atob(text), (ch
 
 /** The documents, on the `Store` port. Each write loads the document, runs the change, and saves in one transaction. */
 export class CommentsDocs {
-  constructor(private readonly store: Store) {}
+  constructor(readonly store: Store) {}
 
   private id(id: string): string {
     if (!DOC_ID.test(id)) invalid(`invalid document id "${id}": use 1 to 64 of a-z, 0-9, "-" and "_"`);
@@ -214,7 +216,10 @@ const fail = (code: string, message: string, status: number) => Response.json({ 
 export type DocsSource = CommentsDocs | ((env: WorkerEnv) => Promise<CommentsDocs>);
 
 export interface AppOptions {
-  /** The credential check. The default reads `AGENTIC_COMMENTS_TOKENS`. Pass any `Auth` from agentic-identity to replace it. */
+  /**
+   * The credential check. The default reads credentials and principals from the Store of the documents (`createStoreAuth`),
+   * then the static list when `AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS=1`. Pass any `Auth` from agentic-identity to replace it.
+   */
   auth?: Auth | ((env: WorkerEnv) => Auth);
   /** Origins that may send a write with a session cookie. A bearer token needs none. Passed to `requirePrincipal`. */
   origins?: RequirePrincipalOptions["origins"];
@@ -247,8 +252,30 @@ export function createApp(source: DocsSource, options: AppOptions = {}): Hono<Ap
   });
   app.get("/health", (c) => c.json({ ok: true, pack: "agentic-comments" }));
   app.use("/api/v1/*", async (c, next) => {
-    const auth = typeof options.auth === "function" ? options.auth(c.env ?? {}) : (options.auth ?? createTokenAuth(c.env?.AGENTIC_COMMENTS_TOKENS));
-    const context = await requirePrincipal(c.req.raw, auth, { origins: options.origins });
+    let auth: Auth;
+    if (typeof options.auth === "function") auth = options.auth(c.env ?? {});
+    else if (options.auth) auth = options.auth;
+    else {
+      const staticOn = c.env?.AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS === "1";
+      // A static list that is set but not switched on is a setup mistake. Refuse it loudly: it never signs anyone in.
+      if (c.env?.AGENTIC_COMMENTS_TOKENS && !staticOn) {
+        return fail("NOT_CONFIGURED", "AGENTIC_COMMENTS_TOKENS is a dev fallback. Set AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS=1 to use it, or remove it and issue agentic-identity credentials", 503);
+      }
+      const store = (await docsOf(c)).store;
+      const auths: Auth[] = [createStoreAuth(store)];
+      if (staticOn) auths.push(createTokenAuth(c.env?.AGENTIC_COMMENTS_TOKENS));
+      auth = {
+        async authenticate(request) {
+          for (const each of auths) {
+            const found = await each.authenticate(request); // a store failure throws: requirePrincipal answers 503, never 401
+            if (found) return found;
+          }
+          return null;
+        },
+      };
+    }
+    // Any comments scope signs in. Each route then checks the scope it needs.
+    const context = await requirePrincipal(c.req.raw, auth, { origins: options.origins, scope: READ });
     if (context instanceof Response) {
       if (context.status === 401) return Response.json({ error: { code: "UNAUTHENTICATED", message: "send a valid bearer token" } }, { status: 401, headers: { "www-authenticate": "Bearer" } });
       if (context.status === 403) return fail("FORBIDDEN", "this credential may not do this", 403);

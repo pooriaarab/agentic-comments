@@ -7,7 +7,8 @@
   "preview_urls": false,
   "compatibility_date": "2026-01-01",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": { "AGENTIC_COMMENTS_REGION": "eu" },
+  // The public demo is a throwaway that uses a static token list, so it turns the dev fallback on.
+  "vars": { "AGENTIC_COMMENTS_REGION": "eu", "AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS": "1" },
   // Created with `wrangler d1 create agentic-comments-demo --location weur`.
   "d1_databases": [{ "binding": "DB", "database_name": "agentic-comments-demo", "database_id": "61c8a26a-953c-4ef0-9a8c-e160e92c25a8" }]
 }
