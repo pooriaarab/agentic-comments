@@ -80,9 +80,9 @@ describe("resolveAnchor", () => {
     const a = createAnchor(text, 6, 11);
     expect(resolveAnchor(a, "Why, hello there. Hello brave world")).toMatchObject({ state: "attached", from: 24, to: 29, method: "quote" });
   });
-  it("falls back to a unique quote when the edit list is wrong", () => {
+  it("falls back to a unique quote when there is no edit list", () => {
     const a = createAnchor(text, 6, 11);
-    expect(resolveAnchor(a, "brave new Hello world", [])).toMatchObject({ state: "attached", from: 0, to: 5, method: "quote" });
+    expect(resolveAnchor(a, "brave new Hello world")).toMatchObject({ state: "attached", from: 0, to: 5, method: "quote" });
   });
   it("picks a duplicate by context", () => {
     const t = "the cat sat. a dog saw the cat run";
@@ -92,7 +92,7 @@ describe("resolveAnchor", () => {
   });
   it("orphans an even duplicate", () => {
     const a = createAnchor("one cat two", 4, 7);
-    expect(resolveAnchor(a, "zzzz cat zzz cat zzzz", [])).toEqual({ state: "orphaned" });
+    expect(resolveAnchor(a, "zzzz cat zzz cat zzzz")).toEqual({ state: "orphaned" });
   });
   it("orphans when the quote is gone and there are no edits", () => {
     expect(resolveAnchor(createAnchor(text, 6, 11), "nothing here")).toEqual({ state: "orphaned" });
@@ -114,5 +114,21 @@ describe("resolveAnchor", () => {
   });
   it("orphans an anchor with no quote", () => {
     expect(resolveAnchor({ quote: "", prefix: "", suffix: "", from: 0, to: 0 }, "abc")).toEqual({ state: "orphaned" });
+  });
+  it("does not jump to another copy of the quote when the edits say where the range went", () => {
+    const t = "brave new world. Be brave.";
+    const edits = [{ from: 2, to: 3, insert: "o" }];
+    expect(resolveAnchor(createAnchor(t, 0, 5), apply(t, edits), edits, t.length)).toEqual({ state: "edited", from: 0, to: 5 });
+  });
+  it("orphans an anchor with bad offsets", () => {
+    for (const [from, to] of [[-1, 3], [-5, 2], [1.5, 3.5], [5, 2], [1, 9]]) {
+      expect(resolveAnchor({ quote: "ab", prefix: "", suffix: "", from: from!, to: to! }, "abcdef", [])).toEqual({ state: "orphaned" });
+    }
+  });
+  it("refuses bad input in the mappers", () => {
+    expect(() => mapRange({ from: 5, to: 2 }, [])).toThrow(RangeError);
+    expect(() => mapPosition(-1, [])).toThrow(RangeError);
+    expect(() => mapPosition(1, [null as unknown as Edit])).toThrow(RangeError);
+    expect(resolveAnchor(createAnchor("hello", 0, 2), "hello", [null as unknown as Edit], 5)).toEqual({ state: "orphaned" });
   });
 });

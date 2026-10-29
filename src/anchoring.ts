@@ -23,7 +23,7 @@ export interface TextRangeAnchor {
   to: number;
 }
 
-export interface Range {
+export interface OffsetRange {
   from: number;
   to: number;
 }
@@ -66,6 +66,7 @@ export function createAnchor(text: string, from: number, to: number): TextRangeA
 }
 
 function checkEdit(edit: Edit, length: number): void {
+  if (typeof edit !== "object" || edit === null) throw new RangeError("an edit must be an object");
   if (!whole(edit.from) || !whole(edit.to) || edit.to < edit.from || edit.to > length || typeof edit.insert !== "string") {
     throw new RangeError(`the edit ${JSON.stringify([edit.from, edit.to])} is not inside a text of ${length} characters`);
   }
@@ -74,9 +75,10 @@ function checkEdit(edit: Edit, length: number): void {
 /**
  * Move one position through edits made one after another. `assoc` 1 puts a position that sits at an
  * insert after the insert. `assoc` -1 puts it before. A position inside a replaced range moves to the
- * start of the insert. `length` is the text length before the first edit.
+ * end of the insert with `assoc` 1, and to the start of the insert with `assoc` -1. `length` is the text length before the first edit.
  */
 export function mapPosition(pos: number, edits: readonly Edit[], assoc: 1 | -1 = 1, length = Infinity): number {
+  if (!whole(pos) || !Array.isArray(edits)) throw new RangeError("the position must be a whole number and the edits a list");
   let len = length;
   let p = pos;
   for (const edit of edits) {
@@ -99,7 +101,8 @@ export function mapPosition(pos: number, edits: readonly Edit[], assoc: 1 | -1 =
  * Move a range through edits. An insert at either edge stays outside the range. Returns null when the
  * edits delete the whole range.
  */
-export function mapRange(range: Range, edits: readonly Edit[], length = Infinity): Range | null {
+export function mapRange(range: OffsetRange, edits: readonly Edit[], length = Infinity): OffsetRange | null {
+  if (!whole(range?.from) || !whole(range?.to) || range.to <= range.from) throw new RangeError("the range must be two whole numbers, from before to");
   let { from, to } = range;
   let len = length;
   for (const edit of edits) {
@@ -134,9 +137,9 @@ const commonPrefix = (a: string, b: string): number => {
  *
  * 1. With `edits` (the changes from the text the anchor was made for to `newText`), map the range. If it
  *    still holds the quote, the anchor is `attached` by `mapped`. If the edits delete the range, it is `orphaned`.
- * 2. Otherwise search for the quote. One match wins. With several, the match whose surrounding text fits
+ * 2. If the range is gone from view (no edits, or the mapped range is outside the text), search for the quote. One match wins. With several, the match whose surrounding text fits
  *    best wins, if that fit is strictly better than every other. A tie is `orphaned`: a wrong place is worse than none.
- * 3. If the quote is gone but a mapped range exists, the anchor is `edited`.
+ * 3. With edits, a mapped range that holds other text is `edited`. The quote is not searched then.
  *
  * Without `edits`, step 1 tries the original offsets.
  */
@@ -144,7 +147,8 @@ export function resolveAnchor(anchor: TextRangeAnchor, newText: string, edits?: 
   if (typeof newText !== "string") throw new TypeError("text must be a string");
   if (typeof anchor?.quote !== "string" || anchor.quote === "") return { state: "orphaned" };
   const quote = anchor.quote;
-  let mapped: Range | null;
+  if (!whole(anchor.from) || !whole(anchor.to) || anchor.to - anchor.from !== quote.length) return { state: "orphaned" };
+  let mapped: OffsetRange | null;
   try {
     mapped = edits ? mapRange({ from: anchor.from, to: anchor.to }, edits, originalLength) : { from: anchor.from, to: anchor.to };
   } catch (error) {
@@ -157,6 +161,8 @@ export function resolveAnchor(anchor: TextRangeAnchor, newText: string, edits?: 
     return { state: "attached", from: mapped.from, to: mapped.to, method: "mapped" };
   }
   const found = occurrences(newText, quote);
+  // A list of edits is the truth about where the range went. A copy of the quote elsewhere is not it.
+  if (edits && valid && mapped) return { state: "edited", from: mapped.from, to: mapped.to };
   if (found.length === 1) return { state: "attached", from: found[0]!, to: found[0]! + quote.length, method: "quote" };
   if (found.length > 1) {
     const score = (at: number) =>
@@ -168,6 +174,5 @@ export function resolveAnchor(anchor: TextRangeAnchor, newText: string, edits?: 
     }
     return { state: "orphaned" };
   }
-  if (edits && valid && mapped) return { state: "edited", from: mapped.from, to: mapped.to };
   return { state: "orphaned" };
 }

@@ -71,12 +71,13 @@ resolveAnchor(anchor, "Oh, Hello brave world", edits);
 
 - An edit is `{ from, to, insert }`. Edits apply one after another, each in the text left by the one before.
 - `resolveAnchor` maps the range through the edits first. If you pass no edits, it tries the old offsets.
-- If the range no longer holds the quote, it searches for the quote. One match wins. With many, the best
+- With edits, a range that holds other text is `edited`. Edits are the truth, so the quote is not searched.
+- With no edits and a range that no longer holds the quote, it searches for the quote. One match wins. With many, the best
   fit of the text around the quote wins. A tie is `orphaned`, because a wrong place is worse than none.
 - `edited` means the range exists but holds other text. `orphaned` means the content is gone.
 - An insert at an edge of the range stays outside it. Deleting the whole range orphans it.
 - `createAnchor` throws a `RangeError` for an empty range, a range outside the text, or a range that cuts a
-  surrogate pair (an emoji) in two.
+  surrogate pair in two. It does not check grapheme boundaries, so a flag or a joined emoji can still be cut.
 - `mapPosition` and `mapRange` move offsets through edits on their own.
 
 ## When the content changes
