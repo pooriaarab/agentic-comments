@@ -19,6 +19,8 @@ const anchor = z
 
 const id = z.string().describe("The thread or suggestion id.");
 const body = z.string().describe("The message text. Write @handle to mention someone.");
+const messageId = z.string().describe("The message id, from get_thread.");
+const person = z.string().describe("The name of the person, as shown on their messages.");
 const mentions = z.array(z.string()).optional().describe("Extra handles to mention.");
 
 function ok(value: unknown): { content: { type: "text"; text: string }[] } {
@@ -41,10 +43,10 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   // comes back as JSON with a code, the same as the CLI, and a key a tool does not list is refused.
   const tools = new Map<string, { strict: z.ZodTypeAny; run: (input: unknown) => unknown }>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tool = (name: string, description: string, shape: z.ZodRawShape, readOnly: boolean, run: (input: any) => unknown) => {
+  const tool = (name: string, description: string, shape: z.ZodRawShape, readOnly: boolean, run: (input: any) => unknown, destructive = false) => {
     const strict = z.object(shape).strict();
     tools.set(name, { strict, run });
-    server.registerTool(name, { description, inputSchema: strict as never, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } }, (() => {
+    server.registerTool(name, { description, inputSchema: strict as never, annotations: { readOnlyHint: readOnly, destructiveHint: destructive, openWorldHint: false } }, (() => {
       throw new Error("calls are handled by the server");
     }) as never);
   };
@@ -57,6 +59,11 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
   tool("resolve_thread", "Resolve a thread.", { id }, false, (i) => service.resolve(i.id));
   tool("reopen_thread", "Reopen a resolved thread.", { id }, false, (i) => service.reopen(i.id));
   tool("relocate_thread", "Move a text anchor to its quote when the quote occurs exactly once.", { id }, false, (i) => service.relocate(i.id));
+  tool("edit_message", "Change the body of a message you wrote. Needs the moderate scope for another person's message.", { id, messageId, body, mentions }, false, (i) => service.editMessage(i.id, i.messageId, { body: i.body, mentions: i.mentions }));
+  tool("delete_message", "Delete a message you wrote. The last message of a thread stays: delete the thread instead.", { id, messageId }, false, (i) => service.deleteMessage(i.id, i.messageId), true);
+  tool("delete_thread", "Delete a thread. Works while every message is yours. Otherwise it needs the moderate scope.", { id }, false, (i) => service.deleteThread(i.id), true);
+  tool("export_person", "Export the messages, status changes, and suggestions one person wrote. Your own, or any with the moderate scope.", { person }, true, (i) => service.exportPerson(i.person));
+  tool("erase_person", "Replace everything one person wrote with a tombstone. The thread shape stays. Your own, or any with the moderate scope.", { person }, false, (i) => service.erasePerson(i.person), true);
   tool("list_suggestions", "List suggested changes.", { status: z.enum(["pending", "accepted", "rejected"]).optional(), anchorState: state }, true, (i) => service.suggestions(i));
   tool(
     "suggest_change",

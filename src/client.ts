@@ -4,13 +4,13 @@
 import type { AnchorSpec, ListFilter } from "./service.js";
 import type { CommentsErrorCode } from "./errors.js";
 import type { PrincipalKind } from "./principal.js";
-import type { Suggestion } from "./suggestions.js";
-import type { Message, NewReply, Thread } from "./threads.js";
+import type { PersonSuggestions, Suggestion } from "./suggestions.js";
+import type { Message, NewReply, PersonExport, Thread } from "./threads.js";
 
 export type { AnchorSpec, ListFilter } from "./service.js";
 export type { CommentsErrorCode } from "./errors.js";
-export type { Message, NewReply, Thread } from "./threads.js";
-export type { Suggestion } from "./suggestions.js";
+export type { Message, NewReply, PersonExport, Thread } from "./threads.js";
+export type { PersonSuggestions, Suggestion } from "./suggestions.js";
 export type { PrincipalKind } from "./principal.js";
 
 /** Codes the comment rules return, plus the ones the Worker and its auth return. */
@@ -92,6 +92,18 @@ export interface Me {
 export type ThreadFilter = ListFilter;
 export type SuggestionListFilter = Pick<ListFilter, "status" | "anchorState">;
 
+/** What `exportPerson` returns: the messages and status changes of one person, and their suggestions. */
+export type PersonData = PersonExport & { suggestions: PersonSuggestions };
+
+/** What `erasePerson` changed in one document. */
+export interface Erased {
+  messages: number;
+  statuses: number;
+  edits: number;
+  suggestions: number;
+  decisions: number;
+}
+
 export interface CommentsClient {
   me(options?: CallOptions): Promise<Me>;
   createDocument(input: { id: string; text?: string }, options?: CallOptions): Promise<{ id: string }>;
@@ -103,6 +115,11 @@ export interface CommentsClient {
   resolve(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
   reopen(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
   relocate(docId: string, threadId: string, options?: CallOptions): Promise<Thread>;
+  editMessage(docId: string, threadId: string, messageId: string, input: { body: string; mentions?: string[] }, options?: CallOptions): Promise<Message>;
+  deleteMessage(docId: string, threadId: string, messageId: string, options?: CallOptions): Promise<{ threadId: string; messageId: string }>;
+  deleteThread(docId: string, threadId: string, options?: CallOptions): Promise<{ threadId: string }>;
+  exportPerson(docId: string, person: string, options?: CallOptions): Promise<PersonData>;
+  erasePerson(docId: string, person: string, options?: CallOptions): Promise<Erased>;
   listSuggestions(docId: string, filter?: SuggestionListFilter, options?: CallOptions): Promise<Suggestion[]>;
   suggest(docId: string, input: { anchor: AnchorSpec; change: unknown; summary?: string }, options?: CallOptions): Promise<Suggestion>;
   accept(docId: string, suggestionId: string, options?: CallOptions): Promise<Suggestion>;
@@ -111,7 +128,7 @@ export interface CommentsClient {
 
 // A success reply must have the expected shape, or the call fails. A proxy or a wrong baseUrl can
 // answer 200 with any body.
-type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions";
+type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions" | "deleted" | "person" | "erased";
 
 // A local list keeps agentic-identity out of the client bundle. The Record type fails the build if a kind is added.
 const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
@@ -126,6 +143,9 @@ const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   message: (v) => isObject(v) && isString(v.id) && isString(v.body) && isObject(v.author),
   suggestion: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isString(v.status) && isObject(v.author),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
+  deleted: (v) => isObject(v) && isString(v.threadId),
+  person: (v) => isObject(v) && isString(v.person) && Array.isArray(v.threads) && isObject(v.suggestions) && Array.isArray(v.suggestions.authored),
+  erased: (v) => isObject(v) && ["messages", "statuses", "edits", "suggestions", "decisions"].every((k) => typeof v[k] === "number"),
 };
 
 export function createClient(options: ClientOptions): CommentsClient {
@@ -204,6 +224,11 @@ export function createClient(options: ClientOptions): CommentsClient {
     resolve: (id, threadId, o) => call("POST", `${thread(id, threadId)}/resolve`, undefined, o, "thread"),
     reopen: (id, threadId, o) => call("POST", `${thread(id, threadId)}/reopen`, undefined, o, "thread"),
     relocate: (id, threadId, o) => call("POST", `${thread(id, threadId)}/relocate`, undefined, o, "thread"),
+    editMessage: (id, threadId, messageId, input, o) => call("PATCH", `${thread(id, threadId)}/messages/${seg(messageId)}`, input, o, "message"),
+    deleteMessage: (id, threadId, messageId, o) => call("DELETE", `${thread(id, threadId)}/messages/${seg(messageId)}`, undefined, o, "deleted"),
+    deleteThread: (id, threadId, o) => call("DELETE", thread(id, threadId), undefined, o, "deleted"),
+    exportPerson: (id, person, o) => call("GET", `${doc(id)}/people/${seg(person)}/export`, undefined, o, "person"),
+    erasePerson: (id, person, o) => call("DELETE", `${doc(id)}/people/${seg(person)}`, undefined, o, "erased"),
     listSuggestions: (id, filter, o) => call("GET", `${doc(id)}/suggestions${query(filter)}`, undefined, o, "suggestions"),
     suggest: (id, input, o) => call("POST", `${doc(id)}/suggestions`, input, o, "suggestion"),
     accept: (id, suggestionId, o) => call("POST", `${suggestion(id, suggestionId)}/accept`, undefined, o, "suggestion"),

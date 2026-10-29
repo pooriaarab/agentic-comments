@@ -31,6 +31,14 @@ export interface Suggestion {
   decidedAt?: string;
 }
 
+/** What a person wrote and decided among the suggestions of one document. */
+export interface PersonSuggestions {
+  authored: Suggestion[];
+  decided: { id: string; status: "accepted" | "rejected"; at: string }[];
+  /** Stored entries with this person's name that the export cannot show. Not 0 means it is not complete. */
+  unread: number;
+}
+
 export interface ApplyContext {
   suggestionId: string;
   anchor: Anchor;
@@ -246,7 +254,7 @@ export class Suggestions {
    * be read, a decision that lost a merge, a refused decision, or a decision with no suggestion. When it is not
    * 0 the export is not complete. A person may export their own data.
    */
-  exportPerson(person: string, actor: Actor): { authored: Suggestion[]; decided: { id: string; status: "accepted" | "rejected"; at: string }[]; unread: number } {
+  exportPerson(person: string, actor: Actor): PersonSuggestions {
     const { match } = this.comments.checkPerson(person, actor);
     const all = this.list();
     const authored = all.filter((s) => match(s.author));

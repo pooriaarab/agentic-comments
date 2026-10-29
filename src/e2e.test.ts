@@ -107,6 +107,29 @@ describe("the command line", () => {
     expect(json(cli(file, ["list", "--status", "open", "--mentioning", "grace"], "human:ada"))).toHaveLength(1);
   });
 
+  test("edit, delete, export, and erase work for the author, and another person needs the moderate scope", () => {
+    const file = fresh();
+    const made = json(cli(file, ["comment", "--cell", "A1", "--body", "ada here"], "human:ada"));
+    const reply = json(cli(file, ["reply", made.id, "--body", "bob here"], "human:bob"));
+    const mine = made.messages[0].id;
+    const refused = cli(file, ["edit-message", made.id, "--message", mine, "--body", "hacked"], "human:bob");
+    expect([refused.code, json(refused).error.code]).toEqual([1, "FORBIDDEN"]);
+    expect(json(cli(file, ["edit-message", made.id, "--message", mine, "--body", "ada fixed"], "human:ada")).editedBy).toEqual({ kind: "human", name: "ada" });
+    const noFlag = cli(file, ["edit-message", made.id, "--body", "x"], "human:ada");
+    expect([noFlag.code, json(noFlag).error.code]).toEqual([2, "USAGE"]);
+    expect(json(cli(file, ["export-person", "ada"], "human:ada")).threads[0].messages[0].body).toBe("ada fixed");
+    expect(json(cli(file, ["export-person", "ada"], "human:bob")).error.code).toBe("FORBIDDEN");
+    expect(json(cli(file, ["export-person", "ada"], "human:root", "comments:moderate")).person).toBe("ada");
+    expect(json(cli(file, ["delete-thread", made.id], "human:ada")).error.code).toBe("FORBIDDEN");
+    expect(json(cli(file, ["delete-message", made.id, "--message", reply.id], "human:bob")).messageId).toBe(reply.id);
+    expect(json(cli(file, ["erase-person", "ada"], "human:ada"))).toEqual({ messages: 1, statuses: 1, edits: 0, suggestions: 0, decisions: 0 });
+    const shown = json(cli(file, ["show", made.id], "human:bob"));
+    expect(shown.messages).toHaveLength(1);
+    expect(shown.messages[0]).toMatchObject({ body: "[erased]", author: { name: "erased" } });
+    expect(json(cli(file, ["delete-thread", made.id], "human:root", "comments:moderate")).threadId).toBe(made.id);
+    expect(json(cli(file, ["list"], "human:ada"))).toEqual([]);
+  });
+
   test("eight processes that reply at once lose nothing", async () => {
     const file = fresh();
     const made = json(cli(file, ["comment", "--cell", "A1", "--body", "start"], "human:ada"));
@@ -417,7 +440,7 @@ describe("the MCP server", () => {
     const client = await connect(fresh(), "agent:bot");
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ["accept_suggestion", "add_comment", "get_thread", "list_suggestions", "list_threads", "reject_suggestion", "relocate_thread", "reopen_thread", "reply_to_thread", "resolve_thread", "suggest_change"].sort(),
+      ["accept_suggestion", "add_comment", "delete_message", "delete_thread", "edit_message", "erase_person", "export_person", "get_thread", "list_suggestions", "list_threads", "reject_suggestion", "relocate_thread", "reopen_thread", "reply_to_thread", "resolve_thread", "suggest_change"].sort(),
     );
     for (const tool of tools) expect(JSON.stringify(tool.inputSchema)).not.toMatch(/author|scope|principal|kind/i);
     await client.close();
@@ -448,6 +471,28 @@ describe("the MCP server", () => {
     expect((await call(person, "accept_suggestion", { id: made.value.id })).value.status).toBe("accepted");
     expect(new FileStore(file).read((ydoc) => ydoc.getText(TEXT_ROOT).toString())).toBe("hello brave world, bold fresh world");
     for (const c of [agent, scoped, person]) await c.close();
+  });
+
+  test("the lifecycle tools obey the same rules as the CLI", async () => {
+    const file = fresh();
+    const ada = await connect(file, "human:ada");
+    const bob = await connect(file, "human:bob");
+    const root = await connect(file, "human:root", "comments:moderate");
+    const made = await call(ada, "add_comment", { anchor: { type: "cell", key: "A1" }, body: "ada here" });
+    const id = made.value.id;
+    const mid = made.value.messages[0].id;
+    expect((await call(bob, "edit_message", { id, messageId: mid, body: "x" })).value.error.code).toBe("FORBIDDEN");
+    expect((await call(ada, "edit_message", { id, messageId: mid, body: "ada fixed" })).value.body).toBe("ada fixed");
+    expect((await call(bob, "export_person", { person: "ada" })).value.error.code).toBe("FORBIDDEN");
+    expect((await call(root, "export_person", { person: "ada" })).value.threads[0].messages[0].body).toBe("ada fixed");
+    expect((await call(ada, "edit_message", { id, messageId: mid, body: "x", author: "bob" })).value.error.code).toBe("INVALID_INPUT");
+    expect((await call(bob, "delete_thread", { id })).value.error.code).toBe("FORBIDDEN");
+    expect((await call(ada, "erase_person", { person: "ada" })).value).toEqual({ messages: 1, statuses: 1, edits: 0, suggestions: 0, decisions: 0 });
+    expect((await call(root, "delete_thread", { id })).value).toEqual({ threadId: id });
+    expect((await call(root, "list_threads", {})).value).toEqual([]);
+    const { tools } = await ada.listTools();
+    for (const name of ["delete_message", "delete_thread", "erase_person"]) expect(tools.find((t) => t.name === name)?.annotations?.destructiveHint).toBe(true);
+    for (const c of [ada, bob, root]) await c.close();
   });
 
   test("both faces return the same shape for the same action", async () => {

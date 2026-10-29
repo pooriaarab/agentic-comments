@@ -7,6 +7,7 @@ Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents
 - SDK: import { Comments, Suggestions, textAnchor } from "agentic-comments". The host calls stamp(); an agent never does.
 - Plain text anchors: import { createAnchor, resolveAnchor, mapRange } from "agentic-comments/anchor". No Yjs. resolveAnchor maps through edits, then falls back to quote + context, else orphaned.
 - Threads live on a Yjs document and merge across replicas.
+- Lifecycle: comments.editMessage, deleteMessage, deleteThread, exportPerson, erasePerson (and the same on the CLI, MCP, HTTP API, and client). Only the author, or comments:moderate, may change what another person wrote.
 - Events: new Notifications(comments, suggestions).subscribe(listener). Ids only, never text.
 - CLI: agentic-comments <command>. MCP: agentic-comments mcp. Both use a local store file.
 

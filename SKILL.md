@@ -25,8 +25,12 @@ Check `thread.anchorState`. An `orphaned` thread has lost its content. Read it, 
 Suggest a change with `suggestions.add({ anchor, change, summary }, actor)`. Accept needs a person or
 the `comments:accept` scope. You never accept or reject your own suggestion.
 
+Change your own words with `edit_message`, `delete_message`, and `delete_thread`. Another person's need the
+`comments:moderate` scope. `export_person` and `erase_person` read or tombstone what one person wrote (your own, or
+anyone's with that scope). Check `unread` in an export.
+
 Over MCP, call `list_threads`, `add_comment`, `reply_to_thread`, `resolve_thread`, `suggest_change`,
-`accept_suggestion`, and `reject_suggestion`. You never pass an author or a scope.
+`accept_suggestion`, `reject_suggestion`, and the tools above. You never pass an author or a scope.
 
 ## Rules
 

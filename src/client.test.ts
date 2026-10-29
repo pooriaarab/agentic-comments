@@ -164,3 +164,34 @@ describe("createClient against the Worker handler", () => {
     expect(await as(ADA).me({ signal: new AbortController().signal })).toMatchObject({ name: "ada" });
   });
 });
+
+describe("lifecycle methods", () => {
+  test("edit, delete, export, and erase go to the right routes and return typed data", async () => {
+    const { as, seen } = setup();
+    const ada = as(ADA);
+    const bot = as(BOT);
+    await ada.createDocument({ id: "d1", text: "abc" });
+    const thread = await ada.addThread("d1", { anchor: { type: "cell", key: "A1" }, body: "ada here" });
+    const reply = await bot.reply("d1", thread.id, { body: "bot here" });
+    const edited = await ada.editMessage("d1", thread.id, thread.messages[0].id, { body: "ada fixed" });
+    expect([edited.body, edited.editedBy?.name]).toEqual(["ada fixed", "ada"]);
+    expect((await refusal(bot.editMessage("d1", thread.id, thread.messages[0].id, { body: "x" }))).code).toBe("FORBIDDEN");
+    const data = await ada.exportPerson("d1", "ada");
+    expect([data.person, data.threads[0].messages[0].body, data.suggestions]).toEqual(["ada", "ada fixed", { authored: [], decided: [], unread: 0 }]);
+    expect(await ada.erasePerson("d1", "ada")).toEqual({ messages: 1, statuses: 1, edits: 0, suggestions: 0, decisions: 0 });
+    expect(await bot.deleteMessage("d1", thread.id, reply.id)).toEqual({ threadId: thread.id, messageId: reply.id });
+    expect(await as(BOSS).deleteThread("d1", thread.id)).toEqual({ threadId: thread.id });
+    expect((await refusal(ada.getThread("d1", thread.id))).code).toBe("NO_THREAD");
+    const methods = seen.map((s) => `${s.init.method} ${new URL(s.url).pathname.replace(thread.id, "T").replace(reply.id, "R").replace(thread.messages[0].id, "M")}`);
+    expect(methods).toContain("PATCH /api/v1/docs/d1/threads/T/messages/M");
+    expect(methods).toContain("DELETE /api/v1/docs/d1/people/ada");
+    expect(methods).toContain("GET /api/v1/docs/d1/people/ada/export");
+  });
+
+  test("a person or message id that would change the route is refused before any request", async () => {
+    const { as, seen } = setup();
+    await expect(as(ADA).exportPerson("d1", "..")).rejects.toThrow(TypeError);
+    await expect(as(ADA).deleteMessage("d1", "t", "")).rejects.toThrow(TypeError);
+    expect(seen).toHaveLength(0);
+  });
+});

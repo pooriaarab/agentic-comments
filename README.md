@@ -72,6 +72,11 @@ normal sync, and every replica sees the same threads.
   (it drops the summary, and the change of a pending or rejected one, which can then no longer be accepted)
   and their decisions. No principal can have the name `erased`.
 
+A self-export or self-erase covers only the actor's own kind: a message that `human:ada` wrote and one that
+`user_token:ada` wrote are two principals, and `unread` does not count the other kind. Ask a moderator for
+both. Erase rewrites a status record, so an erase and a real status change made at once on two replicas keep
+only one of them. An accepted suggestion keeps its `change`, which is still the author's text.
+
 Only the author can edit or delete a message, and a person can export or erase their own data: the same kind
 and name. A principal with the `comments:moderate` scope (`MODERATE_SCOPE`) can do it for anyone, and an
 export or erase by a moderator covers every kind with that name. The host gives that scope to an owner or
@@ -201,8 +206,8 @@ AGENTIC_COMMENTS_AS=agent_of_human:scribe npx agentic-comments suggest --text-qu
 npx agentic-comments accept <id>
 ```
 
-- Commands: `init`, `list`, `show`, `comment`, `reply`, `resolve`, `reopen`, `relocate`, `suggestions`,
-  `suggest`, `accept`, `reject`, `mcp`. Run `npx agentic-comments --help` for flags.
+- Commands: `init`, `list`, `show`, `comment`, `reply`, `resolve`, `reopen`, `relocate`, `edit-message`,
+  `delete-message`, `delete-thread`, `export-person`, `erase-person`, `suggestions`, `suggest`, `accept`, `reject`, `mcp`. Run `npx agentic-comments --help` for flags.
 - Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
   exits 2.
 - The principal comes from `--as` or `AGENTIC_COMMENTS_AS`, as `kind:name`. The name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters. Scopes come only from
@@ -213,8 +218,10 @@ npx agentic-comments accept <id>
   the MCP server on stdio. The operator fixes the principal and the
   scopes when the server starts. No tool takes an author or a scope. A call with any key a tool does not list is refused, so an agent
   cannot pick its own kind or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
-  `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`, `accept_suggestion`,
-  `reject_suggestion`.
+  `reopen_thread`, `relocate_thread`, `edit_message`, `delete_message`, `delete_thread`, `export_person`,
+  `erase_person`, `list_suggestions`, `suggest_change`, `accept_suggestion`, `reject_suggestion`.
+  Another person's message, thread, or data needs `comments:moderate` in `AGENTIC_COMMENTS_SCOPES`. The delete
+  tools and `erase_person` carry the destructive hint.
 - A text change is `{"replace": "new text"}`. A change for a cell, slide, or canvas anchor is
   `{"value": <JSON>}`.
 - From code: `import { FileStore, CommentsService, operatorActor } from "agentic-comments/local"`.
@@ -246,7 +253,10 @@ Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document ro
 | `comments:read` | Read documents, threads, and suggestions. |
 | `comments:comment` | Also add threads, reply, resolve, reopen, and suggest. This is the default for a token with no scopes. |
 | `comments:write` | Also create documents, relocate, and accept or reject. |
-| `comments:admin` | Also let an agent accept or reject (the `comments:accept` right). |
+| `comments:admin` | Also let an agent accept or reject (the `comments:accept` right), and edit, delete, export, or erase what another person wrote (the `comments:moderate` right). |
+
+With `comments:comment` a principal edits and deletes its own messages, deletes a thread when every message is
+its own, and exports or erases its own data. `read` cannot change anything.
 
 | Route | Action |
 | --- | --- |
@@ -257,6 +267,10 @@ Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document ro
 | `GET /api/v1/docs/:doc/threads/:id` | Read one thread. |
 | `POST /api/v1/docs/:doc/threads/:id/replies` | Reply. |
 | `POST .../threads/:id/resolve`, `reopen`, `relocate` | Change a thread. |
+| `PATCH`, `DELETE .../threads/:id/messages/:message` | Edit (`{body, mentions?}`) or delete a message. |
+| `DELETE .../threads/:id` | Delete a thread. |
+| `GET .../people/:name/export` | Export what a person wrote in this document. |
+| `DELETE .../people/:name` | Erase what a person wrote in this document: replace it with a tombstone. |
 | `GET`, `POST /api/v1/docs/:doc/suggestions` | List or suggest. |
 | `POST .../suggestions/:id/accept`, `reject` | Decide. An agent never decides its own suggestion. |
 
@@ -289,7 +303,7 @@ try {
 ```
 
 - The methods match the routes: `me`, `createDocument`, `getDocument`, `listThreads`, `getThread`, `addThread`, `reply`,
-  `resolve`, `reopen`, `relocate`, `listSuggestions`, `suggest`, `accept`, `reject`. Each takes an optional `{ signal }`.
+  `resolve`, `reopen`, `relocate`, `editMessage`, `deleteMessage`, `deleteThread`, `exportPerson`, `erasePerson`, `listSuggestions`, `suggest`, `accept`, `reject`. Each takes an optional `{ signal }`.
 - `baseUrl` is the Worker URL, `http` or `https`, with no query, hash, or credentials.
 - The client never sends an author. The Worker stamps one from the token.
 - A failed call throws `CommentsApiError`. `code` is the API error code, or `UNKNOWN` when the reply is not an API
@@ -389,6 +403,7 @@ const stop = notifications.subscribe(async (event) => {
 - Events come from the data and not from the calls, so a status change that two replicas make at once gives
   each replica its own event, and a thread that arrives whole gives events for its current state only.
 - Every replica of a document must register the same custom anchor kinds.
+- Export and erase work on one document. A person who wrote in many documents needs one call for each.
 - A repeated message id hides every copy, unless every copy is an edit: then the read keeps one. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
 - The quoted text of a text anchor is not checked when a thread is read. A peer can store any text there.
