@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import type { Author } from "./principal.js";
+import { readAuthor, type Author } from "./principal.js";
 import type { Suggestions } from "./suggestions.js";
 import type { Comments } from "./threads.js";
 
@@ -76,7 +76,8 @@ interface Pointing {
  * An event stream for a notifier. It watches the thread and suggestion data, so it sees changes from other
  * replicas too, and marks each as local or remote. It replays nothing it saw before it was created, but a first
  * load into an empty document looks like new changes: create it muted and call `unmute()` after that load.
- * Delivery is at least once with stable ids. A listener cannot break a write. A message past the read limit
+ * Each id is delivered at most once per replica within the `seenLimit` window, and a listener that throws is
+ * not retried. A listener cannot break a write. A message past the read limit
  * of a thread makes no event.
  */
 export class Notifications {
@@ -86,6 +87,7 @@ export class Notifications {
   private readonly stops: (() => void)[] = [];
   private readonly queue: CommentEvent[] = [];
   private flushing = false;
+  private closed = false;
   private readonly seenLimit: number;
   private muted: boolean;
 
@@ -131,6 +133,7 @@ export class Notifications {
 
   /** Stop watching the document and drop every listener. */
   close(): void {
+    this.closed = true;
     for (const stop of this.stops.splice(0)) stop();
     this.listeners.clear();
     this.queue.length = 0;
@@ -172,6 +175,7 @@ export class Notifications {
     try {
       for (let event = this.queue.shift(); event; event = this.queue.shift()) {
         for (const listener of [...this.listeners]) {
+          if (this.closed) return;
           try {
             const result = listener(event);
             if (typeof (result as Promise<void> | undefined)?.then === "function") (result as Promise<void>).catch((error: unknown) => this.fail(error, "listener"));
@@ -206,7 +210,7 @@ export class Notifications {
 
   private mentions(thread: Pointing, message: Mentioning, source: Source): void {
     for (const handle of message.mentions) {
-      this.emit({ id: `mention:${message.id}:${handle}`, type: "mention", at: message.at, source, actor: actorOf(message.author), anchorType: thread.anchor.type, threadId: thread.id, messageId: message.id, mention: handle });
+      this.emit({ id: `mention:${thread.id}:${message.id}:${handle}`, type: "mention", at: message.at, source, actor: actorOf(message.author), anchorType: thread.anchor.type, threadId: thread.id, messageId: message.id, mention: handle });
     }
   }
 
@@ -244,7 +248,10 @@ export class Notifications {
 
   private statusChanged(threadId: string, before: unknown, source: Source): void {
     const thread = this.comments.get(threadId);
-    if ((before as { status?: unknown } | null)?.status !== thread.status) this.statusEvent(thread, source);
+    const old = (before ?? {}) as { status?: unknown; by?: unknown };
+    // A missing or bad old state is not a status. The change from it to a status is not a reopen or a resolve.
+    const real = (old.status === "open" || old.status === "resolved") && readAuthor(old.by) !== undefined;
+    if (real && old.status !== thread.status) this.statusEvent(thread, source);
   }
 
   private created(event: Y.YMapEvent<Y.Map<unknown>>, source: Source): void {
@@ -265,8 +272,8 @@ export class Notifications {
         const s = this.suggestions!.get(id);
         if (s.status !== (type === "suggestion.accepted" ? "accepted" : "rejected") || !s.decidedBy || !s.decidedAt) continue;
         this.emit({ id: `${type}:${id}`, type, at: s.decidedAt, source, actor: actorOf(s.decidedBy), anchorType: s.anchor.type, suggestionId: id });
-      } catch {
-        /* a record for a suggestion that is not there, or is bad, is not an event */
+      } catch (error) {
+        this.fail(error, "data");
       }
     }
   }

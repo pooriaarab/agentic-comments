@@ -380,14 +380,72 @@ describe("batches, loads, and re-entry", () => {
     expect(seen).toEqual(["listener", "data"]);
   });
 
-  test("the window of remembered ids can be set, and a bad one is refused", () => {
+  test("the window of remembered ids can be set: a repeat inside it is dropped and one outside it comes back", () => {
     const r = replica();
     expect(() => new Notifications(r.comments, r.suggestions, { seenLimit: 0 })).toThrow();
     const small = new Notifications(r.comments, r.suggestions, { seenLimit: 2 });
     const seen: string[] = [];
     small.subscribe((e) => void seen.push(e.id));
-    for (const body of ["a", "b", "c"]) r.comments.add({ anchor: cell, body }, ada);
+    const ids = ["a", "b", "c"].map((body) => r.comments.add({ anchor: cell, body }, ada).id);
     expect(seen).toHaveLength(3);
+    const threads = r.ydoc.getMap<Y.Map<unknown>>("comments.threads");
+    const readd = (id: string) => {
+      const raw = threads.get(id)!.toJSON() as { anchor: unknown; state: unknown; messages: unknown[] };
+      threads.delete(id);
+      r.ydoc.transact(() => {
+        const fields = new Y.Map<unknown>();
+        threads.set(id, fields);
+        fields.set("anchor", raw.anchor);
+        fields.set("state", raw.state);
+        const list = new Y.Array<unknown>();
+        fields.set("messages", list);
+        list.push(raw.messages);
+      });
+    };
+    readd(ids[2]);
+    expect(seen).toHaveLength(3);
+    readd(ids[0]);
+    expect(seen).toHaveLength(4);
+  });
+
+  test("errors() keeps at most 100 entries", () => {
+    const r = replica();
+    const threads = r.ydoc.getMap<Y.Map<unknown>>("comments.threads");
+    for (let i = 0; i < 150; i++) threads.set(`bad-${i}`, new Y.Map());
+    expect(r.notifications.errors().length).toBe(100);
+  });
+
+  test("a status write over a missing or bad old state is not a reopen", () => {
+    const r = replica();
+    const t = r.comments.add({ anchor: cell, body: "hi" }, ada);
+    r.events.length = 0;
+    const fields = r.ydoc.getMap<Y.Map<unknown>>("comments.threads").get(t.id)!;
+    fields.set("state", null);
+    fields.set("state", { status: "open", by: { kind: "human", name: "eve" }, at: "2026-01-01T00:00:00.000Z" });
+    fields.set("state", { status: "resolved", by: { kind: "human", name: "eve" }, at: "2026-01-01T00:00:01.000Z" });
+    fields.set("state", { status: "open", by: { kind: "human", name: "eve" }, at: "2026-01-01T00:00:02.000Z" });
+    expect(r.types()).toEqual(["thread.resolved", "thread.reopened"]);
+  });
+
+  test("a mention copied into another thread is a new event, and a listener that closes the stream stops the later listeners", () => {
+    const r = replica();
+    const one = r.comments.add({ anchor: cell, body: "hi @grace" }, ada);
+    const two = r.comments.add({ anchor: cell, body: "other" }, ada);
+    r.events.length = 0;
+    const copy = { ...(r.comments.get(one.id).messages[0] as object), id: (r.comments.get(one.id).messages[0] as { id: string }).id };
+    (r.ydoc.getMap<Y.Map<unknown>>("comments.threads").get(two.id)!.get("messages") as Y.Array<unknown>).push([copy]);
+    expect(r.events.filter((e) => e.type === "mention").map((e) => e.threadId)).toEqual([two.id]);
+    const c = replica();
+    const later: string[] = [];
+    c.notifications.subscribe(() => c.notifications.close());
+    c.notifications.subscribe((e) => void later.push(e.type));
+    c.comments.add({ anchor: cell, body: "x" }, ada);
+    expect(later).toEqual([]);
+  });
+
+  test("a bad decision record is reported as a data error", () => {
+    const r = replica();
+    r.ydoc.getMap("comments.suggestion-applied").set("no-such:1", { junk: true });
+    expect(r.notifications.errors().some((e) => e.source === "data")).toBe(true);
   });
 });
-
