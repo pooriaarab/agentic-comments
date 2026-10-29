@@ -143,14 +143,15 @@ const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes) && v.scopes.every(isString),
   created: (v) => isObject(v) && isString(v.id),
   document: (v) => isObject(v) && isString(v.id) && isString(v.text),
-  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages) && v.messages.every(SHAPES.message),
+  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isObject(v.anchorState) && isString(v.anchorState.state) && (v.status === "open" || v.status === "resolved") &&
+    isAuthor(v.statusBy) && isString(v.statusAt) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) && typeof v.skipped === "number",
   threads: (v) => Array.isArray(v) && v.every(SHAPES.thread),
   message: (v) =>
     isObject(v) && isString(v.id) && isString(v.at) && isString(v.body) && Array.isArray(v.mentions) && v.mentions.every(isString) && isAuthor(v.author) &&
     (v.editedAt === undefined || isString(v.editedAt)) && (v.editedBy === undefined || isAuthor(v.editedBy)),
   suggestion: (v) =>
     isObject(v) && isString(v.id) && isObject(v.anchor) && isObject(v.anchorState) && isString(v.anchorState.state) && (v.status === "pending" || v.status === "accepted" || v.status === "rejected") &&
-    isAuthor(v.author) && isString(v.createdAt) && (v.decidedBy === undefined || isAuthor(v.decidedBy)) && (v.decidedAt === undefined || isString(v.decidedAt)),
+    isAuthor(v.author) && isString(v.createdAt) && "change" in v && (v.summary === undefined || isString(v.summary)) && (v.decidedBy === undefined || isAuthor(v.decidedBy)) && (v.decidedAt === undefined || isString(v.decidedAt)),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
   deletedMessage: (v) => isObject(v) && isString(v.threadId) && isString(v.messageId),
   deletedThread: (v) => isObject(v) && isString(v.threadId),
