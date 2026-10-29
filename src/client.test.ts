@@ -203,5 +203,7 @@ describe("lifecycle reply shapes", () => {
     expect((await refusal(as({ person: "ada", threads: [], suggestions: { authored: [] } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ messages: 1 }).erasePerson("d1", "ada"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ ok: true }).deleteThread("d1", "t"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ threadId: "t" }).deleteMessage("d1", "t", "m"))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ person: "ada", exportedAt: 1, threads: [], edits: [], unread: 0, suggestions: { authored: [], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
   });
 });

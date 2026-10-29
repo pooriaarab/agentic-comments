@@ -128,7 +128,7 @@ export interface CommentsClient {
 
 // A success reply must have the expected shape, or the call fails. A proxy or a wrong baseUrl can
 // answer 200 with any body.
-type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions" | "deleted" | "person" | "erased";
+type Shape = "me" | "created" | "document" | "thread" | "threads" | "message" | "suggestion" | "suggestions" | "deletedMessage" | "deletedThread" | "person" | "erased";
 
 // A local list keeps agentic-identity out of the client bundle. The Record type fails the build if a kind is added.
 const KINDS: Record<PrincipalKind, true> = { human: true, agent_of_human: true, agent_of_agent: true, agent: true, user_token: true };
@@ -143,9 +143,10 @@ const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   message: (v) => isObject(v) && isString(v.id) && isString(v.body) && isObject(v.author),
   suggestion: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && isString(v.status) && isObject(v.author),
   suggestions: (v) => Array.isArray(v) && v.every(SHAPES.suggestion),
-  deleted: (v) => isObject(v) && isString(v.threadId) && (v.messageId === undefined || isString(v.messageId)),
+  deletedMessage: (v) => isObject(v) && isString(v.threadId) && isString(v.messageId),
+  deletedThread: (v) => isObject(v) && isString(v.threadId),
   person: (v) =>
-    isObject(v) && isString(v.person) && Array.isArray(v.threads) && Array.isArray(v.edits) && typeof v.unread === "number" &&
+    isObject(v) && isString(v.person) && isString(v.exportedAt) && Array.isArray(v.threads) && Array.isArray(v.edits) && typeof v.unread === "number" &&
     isObject(v.suggestions) && Array.isArray(v.suggestions.authored) && Array.isArray(v.suggestions.decided) && typeof v.suggestions.unread === "number",
   erased: (v) => isObject(v) && ["messages", "statuses", "edits", "suggestions", "decisions"].every((k) => typeof v[k] === "number"),
 };
@@ -227,8 +228,8 @@ export function createClient(options: ClientOptions): CommentsClient {
     reopen: (id, threadId, o) => call("POST", `${thread(id, threadId)}/reopen`, undefined, o, "thread"),
     relocate: (id, threadId, o) => call("POST", `${thread(id, threadId)}/relocate`, undefined, o, "thread"),
     editMessage: (id, threadId, messageId, input, o) => call("PATCH", `${thread(id, threadId)}/messages/${seg(messageId)}`, input, o, "message"),
-    deleteMessage: (id, threadId, messageId, o) => call("DELETE", `${thread(id, threadId)}/messages/${seg(messageId)}`, undefined, o, "deleted"),
-    deleteThread: (id, threadId, o) => call("DELETE", thread(id, threadId), undefined, o, "deleted"),
+    deleteMessage: (id, threadId, messageId, o) => call("DELETE", `${thread(id, threadId)}/messages/${seg(messageId)}`, undefined, o, "deletedMessage"),
+    deleteThread: (id, threadId, o) => call("DELETE", thread(id, threadId), undefined, o, "deletedThread"),
     exportPerson: (id, person, o) => call("GET", `${doc(id)}/people/${seg(person)}/export`, undefined, o, "person"),
     erasePerson: (id, person, o) => call("DELETE", `${doc(id)}/people/${seg(person)}`, undefined, o, "erased"),
     listSuggestions: (id, filter, o) => call("GET", `${doc(id)}/suggestions${query(filter)}`, undefined, o, "suggestions"),

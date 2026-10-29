@@ -181,6 +181,7 @@ describe("edit, delete, export, and erase", () => {
     expect((await call(BOT, "GET", "/docs/d1/people/ada/export")).json.error.code).toBe("FORBIDDEN");
     expect((await call(BOT, "DELETE", "/docs/d1/people/ada")).json.error.code).toBe("FORBIDDEN");
     expect((await call(SEER, "DELETE", "/docs/d1/people/seer")).status).toBe(403);
+    expect((await call(SEER, "GET", "/docs/d1/people/seer/export")).status).toBe(200);
     const mine = await call(ADA, "GET", "/docs/d1/people/ada/export");
     expect(mine.json.threads[0].messages.map((m: { body: string }) => m.body)).toEqual(["ada here"]);
     expect(JSON.stringify(mine.json)).not.toContain("bot here");
