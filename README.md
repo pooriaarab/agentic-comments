@@ -4,10 +4,10 @@
 
 [Source](https://github.com/pooriaarab/agentic-comments) · [Support](https://github.com/pooriaarab/agentic-comments/issues)
 
-Comment threads anchored to any content, from people and agents.
+Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Only the thread model works. It is not on npm yet. Suggestions,
-> anchor survival, the CLI, the MCP server, and notifications come next.
+> Status: early. Threads and suggestions work. It is not on npm yet. Anchor survival, the CLI, the
+> MCP server, and notifications come next.
 
 ## Install
 
@@ -45,11 +45,64 @@ normal sync, and every replica sees the same threads.
   You can add your own anchor type.
 - A text anchor uses Yjs relative positions, so it follows its text through edits.
 - Messages with mentions. Resolve and reopen a thread.
+- Suggestions: a change your app proposes. A person, or an agent with the accept scope, accepts it.
+  An agent never accepts or rejects its own. Two replicas that accept at once apply it once.
 - The host stamps every author. An operation never reads an author from its input.
 - Every message keeps the author kind, so agent comments stay marked as machine-made.
 - Replies and status merge across replicas. Two replicas that resolve at once agree.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
+
+## Suggestions
+
+Your app owns the change. This package stores it as JSON, tracks the decision, and calls your `apply`.
+
+```ts
+import { ACCEPT_SCOPE, Suggestions } from "agentic-comments";
+
+const suggestions = new Suggestions(comments, {
+  apply(change, { anchor, by, ydoc }) {
+    // Edit ydoc here. Throw before you edit when the change cannot apply.
+    return { /* a receipt, JSON that lets revert undo this edit */ };
+  },
+  revert(receipt, { ydoc }) {
+    // Undo a duplicate edit. Every replica runs this at once, so use an edit that merges to one result.
+    // Throw before you change anything.
+  },
+});
+
+const s = suggestions.add({ anchor, change: { replacement: "bold" }, summary: "Word choice" }, scribe);
+suggestions.accept(s.id, ada);
+```
+
+- A signed-in person (`human`) accepts or rejects. Every other kind, including `user_token`, needs the
+  `comments:accept` scope, and never decides a suggestion it wrote. Names match exactly, in Unicode NFC form (a name in another form is refused), and two
+  principals that are not signed-in people with the same name count as one, whatever their kinds.
+- Accept checks that a text anchor still matches the document, then runs the edit and writes the
+  record in one step. If `apply` throws before it edits, the suggestion stays pending. If it edits and
+  then fails, the decision is recorded without a receipt, and `problems()` reports it. A host that cannot undo a double apply must say `idempotent: true`.
+- Every replica of a document must use the same host mode: the same `revert`, or the same `idempotent`
+  flag. A mix can leave a duplicate edit in the document.
+- `problems()` entries about an edit that failed after it landed, or a duplicate with no receipt, live in
+  memory on the replica that saw them. Other replicas and a reload do not show them.
+- A decision by an agent with the accept scope is final for everyone, including people.
+- An accept on a replica that has not yet seen a reject wins, even when a person made the reject long before.
+  The window is any time the replicas were apart. An agent with the scope can override a person this way.
+  A host that wants the person to win can accept only while its replica is in sync.
+- Two replicas that accept before they meet each apply the edit. After the merge, the application of
+  the lowest client id stays and `revert` undoes each other one. An accept and a reject at once end as
+  accepted.
+- A receipt is stored data. A peer that can write comment data can choose one, and can rewrite the
+  `anchor` to match. Check the receipt in `revert` before you use it. The sync layer's write control is
+  the real protection. A record with no receipt (an `apply` that edited and
+  then failed) always stays, and the other application is undone. If two records have none, the extra
+  edit cannot be undone. `problems()` reports it. With `idempotent: true`, a duplicate is never undone.
+- `apply` and `revert` must be synchronous, and must edit only the Yjs document. `accept` cannot run
+  inside another Yjs transaction, so not inside an observer or an `apply`.
+- A peer that can write the document can write a decision record. Records with a bad author, time, or
+  receipt, or from a decider who wrote the suggestion as an agent, are not counted. A well-formed forged
+  record is, and it can win settle, so every replica undoes the real edit. The sync layer must decide who
+  may write.
 
 ## Author kinds
 
@@ -63,7 +116,7 @@ normal sync, and every replica sees the same threads.
 
 ## Limits
 
-- No suggestions yet. No file store, CLI, MCP server, or HTTP API yet.
+- No file store, CLI, MCP server, or HTTP API yet.
 - `add` checks that a text anchor points into this document and matches its quote. A thread does not
   check later that its anchor still exists. That check comes next.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
@@ -76,6 +129,9 @@ normal sync, and every replica sees the same threads.
 - Every replica of a document must register the same custom anchor kinds.
 - A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
+- The quoted text of a text anchor is not checked when a thread is read. A peer can store any text there.
+  `textAnchor` refuses a quote whose JSON form passes 4,096 characters. Quotes with many newlines or
+  quotation marks hit that before 2,000 characters.
 - The first visible message decides when a thread started, so a peer that inserts an older message at
   the front moves the thread in `list()`.
 - A read scans every stored entry. A peer that writes millions of junk entries slows every read.

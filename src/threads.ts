@@ -3,6 +3,7 @@ import { BUILT_IN_KINDS, MAX_ANCHOR, textOf, type Anchor, type AnchorKind } from
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown, VARIATION } from "./text.js";
+import { copy, exact, invalid, ISO_TIME, strictCopy, validDate } from "./validate.js";
 
 export interface Message {
   id: string;
@@ -67,17 +68,6 @@ const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)(?![\p{
 
 type Fields = Y.Map<unknown>;
 
-const invalid = (message: string): never => {
-  throw new CommentsError("INVALID_INPUT", message);
-};
-
-function exact(input: unknown, allowed: string[], what: string): Record<string, unknown> {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return invalid(`${what} must be an object`);
-  const extra = Object.keys(input).filter((k) => !allowed.includes(k));
-  if (extra.length > 0) invalid(`${what} does not accept ${extra.join(", ")}`);
-  return input as Record<string, unknown>;
-}
-
 function body(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "" || value.length > MAX_BODY || BODY_FORBIDDEN.test(value)) {
     invalid(`a body must be text of 1 to ${MAX_BODY} characters, with no control, invisible, or direction characters`);
@@ -111,21 +101,6 @@ function mentionsOf(text: string, explicit: unknown): string[] {
   return all;
 }
 
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const validDate = (value: unknown): value is string => typeof value === "string" && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
-
-/** A copy that shares nothing with the original, so a caller cannot change what Yjs holds. */
-const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-/** Like `copy`, but refuses what JSON would quietly change: `undefined`, NaN, and Infinity. */
-const strictCopy = <T>(value: T): T =>
-  JSON.parse(
-    JSON.stringify(value, (_key, v: unknown) => {
-      if (v === undefined || (typeof v === "number" && !Number.isFinite(v))) throw new Error("an anchor value is not valid JSON data");
-      return v;
-    }),
-  ) as T;
-
 /** Comment threads on a Yjs document. Replies and status merge across replicas. */
 export class Comments {
   private readonly kinds = new Map<string, AnchorKind>();
@@ -133,7 +108,7 @@ export class Comments {
 
   /** Every replica of a document must register the same custom anchor kinds. Others read those threads as malformed. */
   constructor(
-    private readonly ydoc: Y.Doc,
+    readonly ydoc: Y.Doc,
     options: CommentsOptions = {},
   ) {
     if (typeof options !== "object" || options === null || (options.now !== undefined && typeof options.now !== "function") || (options.anchors !== undefined && !Array.isArray(options.anchors))) {
@@ -152,14 +127,16 @@ export class Comments {
     return this.ydoc.getMap<Fields>(THREADS);
   }
 
-  private time(): string {
+  /** The clock, as an ISO time. Used by `Suggestions`. */
+  time(): string {
     const at = this.now();
     const text = at instanceof Date && !Number.isNaN(at.getTime()) ? at.toISOString() : "";
     if (!ISO_TIME.test(text)) invalid("the clock must return a date between the years 0000 and 9999");
     return text;
   }
 
-  private parseAnchor(raw: unknown): Anchor {
+  /** Read an anchor from stored data. This does not check the document. */
+  parseAnchor(raw: unknown): Anchor {
     const type = (raw as { type?: unknown } | null)?.type;
     const kind = typeof raw === "object" && raw !== null && !Array.isArray(raw) && typeof type === "string" ? this.kinds.get(type) : undefined;
     if (!kind) throw new CommentsError("INVALID_ANCHOR", `an anchor needs a type: ${[...this.kinds.keys()].join(", ")}`);
@@ -172,6 +149,16 @@ export class Comments {
       if (error instanceof CommentsError) throw error;
       throw new CommentsError("INVALID_ANCHOR", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /** Parse an anchor from input and check it against this document. Throws `INVALID_ANCHOR` when it fails. */
+  checkAnchor(raw: unknown): Anchor {
+    const anchor = this.parseAnchor(raw);
+    if (JSON.stringify(this.parseAnchor(anchor)) !== JSON.stringify(anchor)) {
+      throw new CommentsError("INVALID_ANCHOR", "an anchor kind must parse its own output to the same anchor");
+    }
+    this.checkInDocument(anchor);
+    return anchor;
   }
 
   /** A text anchor must name text in this document, in order, and match its quote. */
@@ -262,11 +249,7 @@ export class Comments {
   add(input: NewThread, actor: Actor): Thread {
     const who = assertActor(actor);
     const given = exact(input, ["anchor", "body", "mentions"], "a new thread");
-    const anchor = this.parseAnchor(given.anchor);
-    if (JSON.stringify(this.parseAnchor(anchor)) !== JSON.stringify(anchor)) {
-      throw new CommentsError("INVALID_ANCHOR", "an anchor kind must parse its own output to the same anchor");
-    }
-    this.checkInDocument(anchor);
+    const anchor = this.checkAnchor(given.anchor);
     const first = this.message(body(given.body), given.mentions, who);
     const id = globalThis.crypto.randomUUID();
     this.ydoc.transact(() => {

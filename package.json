@@ -1,11 +1,12 @@
 {
   "name": "agentic-comments",
   "version": "0.0.0",
-  "description": "Comment threads anchored to any content, from people and agents.",
+  "description": "Comment threads and suggestions anchored to any content, from people and agents.",
   "keywords": [
     "comments",
     "threads",
     "mentions",
+    "suggestions",
     "annotations",
     "collaboration",
     "agents",

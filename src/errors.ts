@@ -4,7 +4,11 @@ export type CommentsErrorCode =
   | "INVALID_ANCHOR"
   | "NO_THREAD"
   | "THREAD_RESOLVED"
-  | "CORRUPT";
+  | "CORRUPT"
+  | "NO_SUGGESTION"
+  | "FORBIDDEN"
+  | "ALREADY_DECIDED"
+  | "APPLY_FAILED";
 
 export class CommentsError extends Error {
   constructor(

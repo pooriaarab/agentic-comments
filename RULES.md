@@ -7,5 +7,6 @@ These rules bind every agent that uses this package.
 3. Reopen a resolved thread before you reply.
 4. Report a failed call as a failure. No silent success follows a refusal.
 5. Treat a malformed thread as bad data. Do not repair or trust it.
+6. Never accept or reject your own suggestion. Accept another's only with the comments:accept scope.
 
-Pack: Comment threads anchored to any content, from people and agents. Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
+Pack: Comment threads and suggestions anchored to any content, from people and agents. Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs.

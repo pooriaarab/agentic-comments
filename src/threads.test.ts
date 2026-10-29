@@ -862,4 +862,9 @@ describe("limits and names", () => {
     expect(reason).not.toMatch(/\u202E/);
     expect(reason.length).toBeLessThan(300);
   });
+
+  test("stamp reads scopes once, so a Proxy cannot get bad values past the check", () => {
+    const scopes = new Proxy([1, {}], { get: (o, k) => (k === "every" ? () => true : Reflect.get(o, k)) });
+    expect(code(() => stamp({ kind: "agent", name: "x", scopes: scopes as never }))).toBe("INVALID_AUTHOR");
+  });
 });

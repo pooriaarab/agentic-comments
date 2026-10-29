@@ -1,10 +1,10 @@
 # agentic-comments
 
-Comment threads anchored to any content, from people and agents.
+Comment threads and suggestions anchored to any content, from people and agents.
 
-Keywords: comments,threads,mentions,annotations,collaboration,agents,yjs.
+Keywords: comments,threads,mentions,suggestions,annotations,collaboration,agents,yjs.
 
-- SDK: import { Comments, textAnchor } from "agentic-comments". The host calls stamp(); an agent never does.
+- SDK: import { Comments, Suggestions, textAnchor } from "agentic-comments". The host calls stamp(); an agent never does.
 - Threads live on a Yjs document and merge across replicas.
 - The CLI and MCP server are not built yet.
 
