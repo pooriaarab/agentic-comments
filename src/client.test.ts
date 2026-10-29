@@ -211,6 +211,7 @@ describe("lifecycle reply shapes", () => {
     const bare = { id: "m", at: "x", body: "b", mentions: [], author: {} };
     expect((await refusal(as({ ...partial, threads: [{ threadId: "t", anchor: {}, messages: [bare], statusChange: undefined }] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ id: "m", body: "x", author: { kind: "human", name: "ada" } }).editMessage("d1", "t", "m", { body: "x" }))).code).toBe("UNKNOWN");
+    expect((await refusal(as({ id: "t", anchor: {}, status: "open", messages: [{}] }).getThread("d1", "t"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ ...partial, threads: [{ threadId: "t", anchor: {}, messages: [], statusChange: {} }] }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ ...partial, suggestions: { authored: [1], decided: [], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");
     expect((await refusal(as({ ...partial, suggestions: { authored: [], decided: [{ id: "s", status: "pending", at: "x" }], unread: 0 } }).exportPerson("d1", "ada"))).code).toBe("UNKNOWN");

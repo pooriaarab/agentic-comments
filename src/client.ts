@@ -140,10 +140,10 @@ const personThread = (v: unknown) =>
   isObject(v) && isString(v.threadId) && isObject(v.anchor) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) &&
   (v.statusChange === undefined || (isObject(v.statusChange) && (v.statusChange.status === "open" || v.statusChange.status === "resolved") && isString(v.statusChange.at) && isAuthor(v.statusChange.by)));
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
-  me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
+  me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes) && v.scopes.every(isString),
   created: (v) => isObject(v) && isString(v.id),
   document: (v) => isObject(v) && isString(v.id) && isString(v.text),
-  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages),
+  thread: (v) => isObject(v) && isString(v.id) && isObject(v.anchor) && (v.status === "open" || v.status === "resolved") && Array.isArray(v.messages) && v.messages.every(SHAPES.message),
   threads: (v) => Array.isArray(v) && v.every(SHAPES.thread),
   message: (v) =>
     isObject(v) && isString(v.id) && isString(v.at) && isString(v.body) && Array.isArray(v.mentions) && v.mentions.every(isString) && isAuthor(v.author) &&
