@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -318,6 +318,56 @@ describe("the store under stress 2", () => {
     const message = json(cli(file, ["comment", "--text-quote", "secret", "--body", "x"], "human:ada")).error.message;
     expect(message).toContain("offsets 0, 12");
     expect(message).not.toContain("one");
+  });
+});
+
+
+describe("locks and paths", () => {
+  test("a lock with this process id and another mark is cleared, and a live lock that is old is cleared", () => {
+    const file = fresh();
+    writeFileSync(`${file}.lock`, `${process.pid}:left-by-a-crashed-run`);
+    expect(new FileStore(file, { lockTimeoutMs: 0 }).write(() => "ok")).toBe("ok");
+    writeFileSync(`${file}.lock`, String(process.pid));
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(`${file}.lock`, old, old);
+    expect(cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada").code).toBe(0);
+  });
+
+  test("a live lock that is new still blocks", () => {
+    const file = fresh();
+    writeFileSync(`${file}.lock`, `${process.pid}:${"a".repeat(8)}`);
+    const run = cli(file, ["comment", "--cell", "A1", "--body", "x"], "human:ada");
+    expect([run.code, json(run).error.code]).toEqual([1, "STORE_LOCKED"]);
+  });
+
+  test("a symlink as the store path is followed, and stays a symlink", () => {
+    const file = fresh();
+    const link = join(dir, `link-${count++}.ydoc`);
+    symlinkSync(file, link);
+    expect(json(cli(link, ["comment", "--cell", "A1", "--body", "via link"], "human:ada")).messages).toHaveLength(1);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(json(cli(file, ["list"], "human:ada"))).toHaveLength(1);
+  });
+
+  test("a full disk while a lock is written is STORE_FULL and leaves no lock", () => {
+    const file = fresh();
+    const run = spawnSync("bash", ["-c", `ulimit -f 0; exec node "$0" "$@"`, dist("cli.js"), "comment", "--cell", "B2", "--body", "y"], { env: env(file, "human:ada"), encoding: "utf8" });
+    expect([run.status, JSON.parse(run.stderr).error.code]).toEqual([1, "STORE_FULL"]);
+    expect(existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  test("the standalone MCP binary survives a file size limit", async () => {
+    const file = fresh();
+    const before = readFileSync(file);
+    const limit = Math.ceil(before.length / 1024) + 1;
+    const transport = new StdioClientTransport({ command: "bash", args: ["-c", `ulimit -f ${limit}; exec node "$0"`, dist("mcp-bin.js")], env: Object.fromEntries(Object.entries(env(file, "human:ada")).filter(([, v]) => v !== undefined)) as Record<string, string> });
+    const client = new Client({ name: "test", version: "1" });
+    await client.connect(transport);
+    const r = (await client.callTool({ name: "add_comment", arguments: { anchor: { type: "cell", key: "A1" }, body: "z".repeat(9_000) } })) as { isError?: boolean; content: { text: string }[] };
+    expect([r.isError, JSON.parse(r.content[0].text).error.code]).toEqual([true, "STORE_FULL"]);
+    expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+    expect(readFileSync(file).equals(before)).toBe(true);
+    await client.close();
   });
 });
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as Y from "yjs";
 import { CommentsError } from "./errors.js";
@@ -10,6 +10,8 @@ const MAGIC = Buffer.from("ACV1");
 const HASH = 32;
 const POLL_MS = 25;
 const EMPTY_LOCK_MS = 2_000;
+/** A write takes milliseconds. A lock older than this is left over, even when its process id is taken again. */
+const LOCK_MAX_AGE_MS = 60_000;
 const ATTEMPTS = 4;
 
 export interface FileStoreOptions {
@@ -119,7 +121,8 @@ export class FileStore {
   private readonly lockTimeoutMs: number;
 
   constructor(path: string, options: FileStoreOptions = {}) {
-    this.path = resolve(path);
+    const given = resolve(path);
+    this.path = existsSync(given) ? realpathSync(given) : given;
     const timeout = options.lockTimeoutMs ?? 5_000;
     if (!Number.isSafeInteger(timeout) || timeout < 0) throw new CommentsError("INVALID_INPUT", "lockTimeoutMs must be a whole number of milliseconds, 0 or more");
     this.lockTimeoutMs = timeout;
@@ -137,10 +140,18 @@ export class FileStore {
     try {
       linkSync(temporary, this.path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
-      throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "ENOSYS") throw error;
+      // This filesystem has no hard links. Fall back to a check and a rename, which can race.
+      if (existsSync(this.path)) throw new CommentsError("STORE_EXISTS", `${this.path} already exists`);
+      renameSync(temporary, this.path);
     } finally {
-      unlinkSync(temporary);
+      try {
+        unlinkSync(temporary);
+      } catch {
+        /* moved into place */
+      }
     }
     syncDirectory(this.path);
   }
@@ -164,14 +175,23 @@ export class FileStore {
         const handle = openSync(lock, "wx");
         try {
           writeAll(handle, Buffer.from(mine));
-        } finally {
+        } catch (error) {
           closeSync(handle);
+          try {
+            unlinkSync(lock);
+          } catch {
+            /* already gone */
+          }
+          if (FULL.has((error as NodeJS.ErrnoException).code ?? "")) throw new CommentsError("STORE_FULL", "the lock could not be written: the disk is full");
+          throw error;
         }
+        closeSync(handle);
         return;
       } catch (error) {
+        if (error instanceof CommentsError) throw error;
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new CommentsError("STORE_LOCKED", `${lock} cannot be created: ${(error as NodeJS.ErrnoException).code ?? "an error"}`);
       }
-      if (this.clearStale(lock)) continue;
+      if (this.clearStale(lock, mine)) continue;
       if (Date.now() >= deadline) {
         throw new CommentsError("STORE_LOCKED", `${lock} is held by another process; remove it only if nothing uses ${this.path}`);
       }
@@ -180,10 +200,11 @@ export class FileStore {
   }
 
   /**
-   * Clear a lock whose holder is dead, or an empty one older than a short time. The lock moves to a unique name
+   * Clear a lock whose holder is dead (or is this process, with another mark), an empty one older than a
+ * short time, or any one older than a minute. The lock moves to a unique name
    * first, so only one process clears it. If the moved lock is not the one we looked at, it goes back.
    */
-  private clearStale(lock: string): boolean {
+  private clearStale(lock: string, mine: string): boolean {
     let held: string;
     let age: number;
     try {
@@ -193,8 +214,10 @@ export class FileStore {
       return (error as NodeJS.ErrnoException).code === "ENOENT";
     }
     const pid = Number(held.split(":")[0]);
-    const dead = /^\d{1,10}(:[\w-]{1,64})?$/.test(held) && pid > 0 && !alive(pid);
-    if (!dead && !(held === "" && age > EMPTY_LOCK_MS)) return false;
+    const well = /^\d{1,10}(:[\w-]{1,64})?$/.test(held) && pid > 0;
+    // A write in this process is synchronous, so a lock with our id and another mark cannot be live.
+    const left = well && (!alive(pid) || (pid === process.pid && held !== mine));
+    if (!left && !(held === "" && age > EMPTY_LOCK_MS) && age <= LOCK_MAX_AGE_MS) return false;
     const tomb = `${lock}.stale-${process.pid}-${globalThis.crypto.randomUUID()}`;
     try {
       renameSync(lock, tomb);

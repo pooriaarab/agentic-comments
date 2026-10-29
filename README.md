@@ -128,9 +128,10 @@ suggestions.accept(s.id, ada);
 ## CLI and MCP server
 
 Both run on a local store: one file that holds a Yjs document. The text is in the `text` root, and
-non-text values are in the `values` map. A file starts with a hash, so a damaged or zero-filled file is refused and not read as empty. A write
+non-text values are in the `values` map. A file starts with a magic mark and a hash, so a damaged or zero-filled file is refused and not read as empty. A write
 takes a lock file, saves with a rename, and runs again if the file changed meanwhile, so parallel processes
-on one machine lose nothing. A full disk or a file size limit fails the write and leaves the old file. A lock left by a dead process, or an empty one older than two seconds, is cleared. The store is for one
+on one machine lose nothing. A full disk or a file size limit fails the write and leaves the old file. A lock left by a dead process, or by this process under another mark, is cleared. So is an empty lock older
+than two seconds and any lock older than a minute. The store is for one
 machine. It cannot check a lock held in another container or on another machine. A save that
 would pass 50 MB is refused.
 
@@ -155,7 +156,8 @@ npx agentic-comments accept <id>
   `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author,
   and a flag that does not apply to a command is refused. `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS` sets the wait
   for a lock, in whole milliseconds.
-- `npx agentic-comments mcp` starts the MCP server on stdio. The operator fixes the principal and the
+- `npx agentic-comments mcp` (or the `agentic-comments-mcp` binary, which reads the same environment) starts
+  the MCP server on stdio. The operator fixes the principal and the
   scopes when the server starts. No tool takes an author or a scope. A call with any key a tool does not list is refused, so an agent
   cannot pick its own kind or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
   `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`, `accept_suggestion`,
@@ -187,6 +189,9 @@ npx agentic-comments accept <id>
   on every read, so keep it fast.
 - A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows the first
   2,000 valid messages. `skipped` and `problems()` report the rest.
+- If several processes clear one stale lock at the same moment, two writes can very rarely overlap. The
+  save check catches almost every such case. A symlink as the store path is followed. A filesystem with no
+  hard links makes `init` use a check and a rename, which can race.
 - The CLI trusts its caller: a process that can set `AGENTIC_COMMENTS_AS` and `AGENTIC_COMMENTS_SCOPES` can
   act as anyone. Give an agent the MCP server, where the operator fixes both. Do not give it a shell with
   the store file and the CLI.

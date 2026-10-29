@@ -85,6 +85,8 @@ export function createMcpServer(store: FileStore, actor: Actor): McpServer {
 }
 
 export async function startMcp(store: FileStore, actor: Actor): Promise<void> {
+  // A write past a file size limit should fail with an error we can report, not end the server.
+  process.on("SIGXFSZ", () => undefined);
   const server = createMcpServer(store, actor);
   await server.connect(new StdioServerTransport());
 }
