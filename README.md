@@ -111,6 +111,11 @@ error, not an empty run. Erase goes document by document. If one fails, the erro
 documents stay erased. A failed document in `documents` may be partly erased (its threads and its suggestions
 are two steps). A repeat counts only what is left. The counts of a failed run are lost.
 
+The ids in `documents` and the ids of the worker share one namespace. Erase can make a state a little larger, so a stored
+document near the size limit may stop the run with `STORE_FULL`: the host must shrink or delete that document, and
+run the erase again. The run reads the list of stored documents once. Block the subject before the erase, so no
+document is made during it. A repeat erase finishes what a race left.
+
 ## Anchors for plain text
 
 `agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
