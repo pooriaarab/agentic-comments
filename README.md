@@ -232,17 +232,26 @@ npx agentic-comments accept <id>
 document in a D1 database through the `Store` port of `agentic-identity`. It checks every request with the
 `Auth` port, so the host picks who the caller is and no request carries an author.
 
-Set the principals as a secret. It is JSON from a bearer token to `kind:name`, or to
-`{ "as": "kind:name", "scopes": [...] }`. A token is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`, so a base64 token with `+` or `/` is refused.
-A name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters.
-One bad entry refuses the whole table. A request with no valid token gets `401`.
+By default the Worker signs requests in with `agentic-identity`. Principals and their credentials live in the same
+`Store` as the documents (`createStoreAuth`). A request sends `Authorization: Bearer <key>`. The scopes of the
+principal decide what it may do (see the table below). A request with no valid credential gets `401`. A valid
+credential whose scopes fall short gets `403`. A store failure while the credential is read gets `503`, never `401`.
+Issue credentials with `issueCredential` from `agentic-identity`.
 A request whose `Authorization` header is not `Bearer` followed by 1 to 512 bytes of A-Z a-z 0-9 `_` `-` gets `401`, before any custom `Auth` runs.
 A write with no `Authorization` header (a session cookie, for example) gets `403` unless its `Origin` is in the `origins`
 option of `createApp`. The default lists none.
 
+**Static token list (dev fallback).** `AGENTIC_COMMENTS_TOKENS` is read only when `AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS=1`.
+Identity credentials are tried first, then the list. A Worker that sets the list without the switch answers every
+`/api/v1` request with `503 NOT_CONFIGURED`. The list is JSON from a bearer token to `kind:name`, or to
+`{ "as": "kind:name", "scopes": [...] }`. A token is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`.
+A name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters.
+One bad entry refuses the whole table. A token with no scopes holds `comments:comment`. Never use the list in production.
+
 ```sh
 wrangler secret put AGENTIC_COMMENTS_TOKENS
 # {"<openssl rand -hex 32>": {"as": "human:ada", "scopes": ["comments:write"]}, "<another>": "agent_of_human:scribe"}
+wrangler secret put AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS   # the value is 1
 ```
 
 Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document route fails with `500 MISCONFIGURED`. Use `unknown` with
@@ -251,7 +260,7 @@ Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document ro
 | Scope | Allows |
 | --- | --- |
 | `comments:read` | Read documents, threads, and suggestions. |
-| `comments:comment` | Also add threads, reply, resolve, reopen, and suggest. This is the default for a token with no scopes. |
+| `comments:comment` | Also add threads, reply, resolve, reopen, and suggest. This is the default for a static-list token with no scopes. |
 | `comments:write` | Also create documents, relocate, and accept or reject. |
 | `comments:admin` | Also let an agent accept or reject (the `comments:accept` right), and edit, delete, export, or erase what another person wrote (the `comments:moderate` right). |
 
@@ -323,7 +332,7 @@ To deploy your own copy, log in with `wrangler login` or set `CLOUDFLARE_API_TOK
 
 ```sh
 npx wrangler d1 create agentic-comments-demo --location weur   # once. Put the id in wrangler.demo.jsonc.
-npx wrangler secret put AGENTIC_COMMENTS_TOKENS --config wrangler.demo.jsonc   # see HTTP API
+npx wrangler secret put AGENTIC_COMMENTS_TOKENS --config wrangler.demo.jsonc   # the demo uses the static list. See HTTP API
 npm run deploy:demo
 ```
 

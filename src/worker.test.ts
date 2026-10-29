@@ -18,7 +18,7 @@ function setup() {
   const call = async (token: string | null, method: string, path: string, body?: unknown) => {
     const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
     if (body !== undefined) headers["content-type"] = "application/json";
-    const res = await app.request(`/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }, { AGENTIC_COMMENTS_TOKENS: TOKENS });
+    const res = await app.request(`/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }, { AGENTIC_COMMENTS_TOKENS: TOKENS, AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS: "1" });
     return { status: res.status, json: (await res.json()) as any };
   };
   return { call };
@@ -125,7 +125,7 @@ describe("threads", () => {
   test("a store that keeps conflicting is 409 CONFLICT, not a 500", async () => {
     const store = createMemoryStore({ region: "unknown" });
     const app = createApp(new CommentsDocs(store));
-    const env = { AGENTIC_COMMENTS_TOKENS: TOKENS };
+    const env = { AGENTIC_COMMENTS_TOKENS: TOKENS, AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS: "1" };
     const headers = { authorization: `Bearer ${ADA}`, "content-type": "application/json" };
     await app.request("/api/v1/docs", { method: "POST", headers, body: JSON.stringify({ id: "d1", text: "abc" }) }, env);
     store.transaction = async () => {

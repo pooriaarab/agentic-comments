@@ -65,7 +65,7 @@ const api = (base: string, token: string | null, method: string, path: string, b
 
 describe("the Worker under wrangler dev", () => {
   test("threads and suggestions survive a restart, no auth is 401, and an agent cannot decide its own suggestion", async () => {
-    const vars = { AGENTIC_COMMENTS_TOKENS: JSON.stringify(TOKENS), AGENTIC_COMMENTS_REGION: "unknown", AGENTIC_COMMENTS_UNSAFE_REGION: "1" };
+    const vars = { AGENTIC_COMMENTS_TOKENS: JSON.stringify(TOKENS), AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS: "1", AGENTIC_COMMENTS_REGION: "unknown", AGENTIC_COMMENTS_UNSAFE_REGION: "1" };
     let server = await start(vars);
     expect((await api(server.base, null, "GET", "/docs/d1/threads")).status).toBe(401);
     expect((await api(server.base, "x".repeat(40), "GET", "/docs/d1/threads")).status).toBe(401);
@@ -87,7 +87,7 @@ describe("the Worker under wrangler dev", () => {
   }, 180_000);
 
   test("without a region claim the API refuses to run", async () => {
-    const server = await start({ AGENTIC_COMMENTS_TOKENS: JSON.stringify(TOKENS) });
+    const server = await start({ AGENTIC_COMMENTS_TOKENS: JSON.stringify(TOKENS), AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS: "1" });
     const res = await api(server.base, ADA, "GET", "/docs/d1/threads");
     expect([res.status, res.json.error.code]).toEqual([500, "MISCONFIGURED"]);
     await server.stop();

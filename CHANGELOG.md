@@ -2,6 +2,19 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** the Worker signs in with `agentic-identity` by default. Credentials and principals are read from the `Store`
+  of the documents with `createStoreAuth`. Any comments scope signs in, and each route checks the scope it needs: no valid
+  credential is `401`, too few scopes is `403`, and a store failure is `503`.
+- **Breaking:** `AGENTIC_COMMENTS_TOKENS` is now an explicit dev fallback. It is read only with
+  `AGENTIC_COMMENTS_UNSAFE_STATIC_TOKENS=1`, and it is tried after the identity credentials. A Worker that sets the list
+  without the switch answers `503 NOT_CONFIGURED`. To migrate: issue identity credentials (`issueCredential`), or set the
+  switch for a dev setup. `createApp` with your own `auth` is not affected.
+- `CommentsDocs` exposes its `store`. The `agentic-identity` dependency is now `^0.7.0`.
+
 ## 0.5.1
 
 ### Changed
