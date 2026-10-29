@@ -12,6 +12,9 @@ import { Actor, authorLabel, Comments, CommentsError, PRINCIPAL_KINDS, stamp, te
 //  7. A reply lands on a resolved thread, or resolve is not idempotent.
 //  8. Two replicas lose a reply, or disagree on order or status after a merge.
 //  9. A hostile replica writes a malformed thread and breaks listing for all.
+// 10. A write the library accepts cannot be read back, so a reply is lost without an error.
+// 11. A value changes between the check and the write, or a caller edits what it got back.
+// 12. A thread grows past a limit, or a peer fills it with junk, and replies stop.
 
 const ada = stamp({ kind: "human", name: "ada" });
 const bot = stamp({ kind: "agent_of_human", name: "scribe" });
@@ -121,7 +124,7 @@ describe("bodies and mentions", () => {
     comments.add({ anchor: cell, body: "plain" }, ada);
     const hit = comments.add({ anchor: cell, body: "look @grace" }, ada);
     expect(comments.list({ mentioning: "grace" }).map((t) => t.id)).toEqual([hit.id]);
-    comments.reply(hit.id, { body: "ack" }, bot);
+    expect(comments.reply(hit.id, { body: "ack" }, bot).mentions).toEqual([]);
     expect(comments.list({ mentioning: "nobody" })).toEqual([]);
   });
 });
@@ -319,7 +322,7 @@ describe("two replicas", () => {
   });
 });
 
-describe("review findings", () => {
+describe("stored data and returned values", () => {
   const ISO = "2026-01-01T00:00:00.000Z";
   const rawMessage = (over: Record<string, unknown> = {}) => ({ id: "m-raw", at: ISO, author: { kind: "human", name: "eve" }, body: "raw", mentions: [], ...over });
   const rawMessages = (doc: Y.Doc, id: string) => doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
@@ -459,7 +462,7 @@ describe("review findings", () => {
   });
 });
 
-describe("second review findings", () => {
+describe("limits and names", () => {
   const ISO = "2026-01-01T00:00:00.000Z";
   const itemAnchor = () => {
     const text = new Y.Doc().getText("t");
@@ -642,5 +645,68 @@ describe("second review findings", () => {
     doc.getMap<Y.Map<unknown>>("comments.threads").set(long, new Y.Map());
     expect(comments.problems().every((p) => p.id.length <= 64 && p.reason.length < 300)).toBe(true);
     expect(code(() => comments.get(long))).toBe("NO_THREAD");
+  });
+
+  test("every body the library accepts can be read back, and the rest are refused before any write", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const bodies = ["ask @İlker", "ask @" + "İ".repeat(40), "@ß @ǅ @ŉ", "mail @a.b-c_d", "@" + "x".repeat(70), "@\u0130\u0307"];
+    for (const body of bodies) {
+      const before = comments.list().length;
+      let id: string | undefined;
+      try {
+        id = comments.add({ anchor: cell, body }, ada).id;
+      } catch (error) {
+        expect((error as CommentsError).code).toBe("INVALID_INPUT");
+      }
+      if (id) {
+        const reply = comments.reply(id, { body }, bot);
+        expect(comments.get(id).messages.map((m) => m.id)).toContain(reply.id);
+        expect(comments.get(id).skipped).toBe(0);
+      } else expect(comments.list()).toHaveLength(before);
+    }
+    expect(comments.problems()).toEqual([]);
+  });
+
+  test("a mentions array that changes between reads cannot get a bad handle past the check", () => {
+    let reads = 0;
+    const mentions = new Proxy(["bob"], {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        return key === "0" && reads++ > 0 ? "Evil Name\u202E" : value;
+      },
+    });
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    let made: string | undefined;
+    try {
+      made = comments.add({ anchor: cell, body: "hi", mentions: mentions as never }, ada).id;
+    } catch (error) {
+      expect((error as CommentsError).code).toBe("INVALID_INPUT");
+    }
+    expect(comments.problems()).toEqual([]);
+    if (made) expect(comments.get(made).messages[0].mentions).toEqual(["bob"]);
+  });
+
+  test("bad options fail with a CommentsError", () => {
+    for (const options of [null, 5, { now: 5 }, { anchors: {} }, { anchors: [null] }]) {
+      expect(code(() => new Comments(new Y.Doc(), options as never))).toMatch(/INVALID_INPUT|INVALID_ANCHOR/);
+    }
+  });
+
+  test("junk entries do not count toward the reply cap, and a thread tells how many messages it skipped", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "hi" }, ada);
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push(Array.from({ length: 999 }, () => 0));
+    expect(comments.get(id).skipped).toBe(999);
+    expect(comments.reply(id, { body: "still fine" }, bot).body).toBe("still fine");
+  });
+
+  test("a custom anchor over the size cap is refused", () => {
+    const wide = { type: "wide", parse: (raw: Record<string, unknown>) => ({ type: "wide", blob: raw.blob }) };
+    const comments = new Comments(new Y.Doc(), { now: clock, anchors: [wide] });
+    expect(code(() => comments.add({ anchor: { type: "wide", blob: "x".repeat(5_000) } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    expect(comments.add({ anchor: { type: "wide", blob: "small" } as never, body: "x" }, ada).anchor).toEqual({ type: "wide", blob: "small" });
   });
 });

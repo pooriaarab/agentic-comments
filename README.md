@@ -48,7 +48,8 @@ normal sync, and every replica sees the same threads.
 - The host stamps every author. An operation never reads an author from its input.
 - Every message keeps the author kind, so agent comments stay marked as machine-made.
 - Replies and status merge across replicas. Two replicas that resolve at once agree.
-- A malformed thread from a bad replica is skipped. `problems()` names it.
+- A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
+  thread counts those. `problems()` names them.
 
 ## Limits
 

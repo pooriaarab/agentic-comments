@@ -24,6 +24,8 @@ export interface Thread {
   statusBy: Author;
   statusAt: string;
   messages: Message[];
+  /** How many stored messages this read left out because they were not valid. `problems()` names them. */
+  skipped: number;
 }
 
 export interface CommentsOptions {
@@ -56,6 +58,7 @@ const MAX_MENTIONS = 50;
 /** A local reply stops here. Replicas that reply at once can go past it, so a read shows up to twice as many. */
 const MAX_MESSAGES = 1_000;
 const READ_LIMIT = 2 * MAX_MESSAGES;
+const MAX_ANCHOR = 4_096;
 const STATUSES = ["open", "resolved"];
 const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}_.-]{0,62}[\p{L}\p{N}])?$/u;
 const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}_.-]{0,63})/gu;
@@ -87,9 +90,10 @@ function mentionsOf(text: string, explicit: unknown): string[] {
   const found = [...text.matchAll(MENTION)].map((m) => handle(m[1].replace(/[._-]+$/, "")));
   let listed: string[] = [];
   if (explicit !== undefined) {
-    const ok = Array.isArray(explicit) && explicit.length <= MAX_MENTIONS && explicit.every((m) => typeof m === "string" && HANDLE.test(handle(m)));
-    if (!ok) invalid(`mentions must be a list of up to ${MAX_MENTIONS} handles with no spaces`);
-    listed = (explicit as string[]).map(handle);
+    const snapshot: unknown[] = Array.isArray(explicit) ? Array.from(explicit) : [];
+    const ok = Array.isArray(explicit) && snapshot.length <= MAX_MENTIONS && snapshot.every((m) => typeof m === "string" && HANDLE.test(handle(m)));
+    if (!ok) invalid(`mentions must be a list of up to ${MAX_MENTIONS} handles of letters, digits, and . _ -`);
+    listed = (snapshot as string[]).map(handle);
   }
   const all = [...new Set([...found, ...listed])];
   if (all.length > MAX_MENTIONS) invalid(`a message can mention up to ${MAX_MENTIONS} handles`);
@@ -112,6 +116,9 @@ export class Comments {
     private readonly ydoc: Y.Doc,
     options: CommentsOptions = {},
   ) {
+    if (typeof options !== "object" || options === null || (options.now !== undefined && typeof options.now !== "function") || (options.anchors !== undefined && !Array.isArray(options.anchors))) {
+      invalid("options must be an object with an optional now function and an optional anchors list");
+    }
     this.now = options.now ?? (() => new Date());
     for (const kind of [...BUILT_IN_KINDS, ...(options.anchors ?? [])]) {
       if (typeof kind?.type !== "string" || kind.type === "" || typeof kind.parse !== "function" || this.kinds.has(kind.type)) {
@@ -138,6 +145,7 @@ export class Comments {
     if (!kind) throw new CommentsError("INVALID_ANCHOR", `an anchor needs a type: ${[...this.kinds.keys()].join(", ")}`);
     try {
       const parsed = copy(kind.parse(copy(raw) as Record<string, unknown>));
+      if (JSON.stringify(parsed).length > MAX_ANCHOR) throw new Error(`an anchor holds up to ${MAX_ANCHOR} characters of JSON`);
       if (parsed?.type !== kind.type) throw new Error(`the "${kind.type}" kind must return an anchor of its own type`);
       return parsed as Anchor;
     } catch (error) {
@@ -164,14 +172,20 @@ export class Comments {
     }
   }
 
+  /** Build a message, and refuse it unless a read would show it back. Nothing is written yet. */
   private message(text: string, explicit: unknown, actor: Actor): Message {
-    return {
+    const message: Message = {
       id: globalThis.crypto.randomUUID(),
       at: this.time(),
       author: { kind: actor.kind, name: actor.name },
       body: text,
       mentions: mentionsOf(text, explicit),
     };
+    try {
+      return this.readMessage(copy(message));
+    } catch (error) {
+      return invalid(`the message cannot be stored: ${(error as Error).message}`);
+    }
   }
 
   private readMessage(raw: unknown): Message {
@@ -210,7 +224,8 @@ export class Comments {
         }
       });
       if (messages.length === 0) throw new Error("the thread has no valid message");
-      return { thread: { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages }, issues };
+      const thread: Thread = { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: issues.filter((i) => i.startsWith("message ")).length };
+      return { thread, issues };
     } catch (error) {
       throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -250,11 +265,10 @@ export class Comments {
     const given = exact(input, ["body", "mentions"], "a reply");
     const { id, fields } = this.fields(threadId);
     const text = body(given.body);
-    if (this.read(id, fields).thread.status === "resolved") {
-      throw new CommentsError("THREAD_RESOLVED", `thread ${shown(id)} is resolved; reopen it to reply`);
-    }
+    const { thread } = this.read(id, fields);
+    if (thread.status === "resolved") throw new CommentsError("THREAD_RESOLVED", `thread ${shown(id)} is resolved; reopen it to reply`);
+    if (thread.messages.length >= MAX_MESSAGES) invalid(`thread ${shown(id)} shows ${MAX_MESSAGES} messages and takes no more`);
     const list = fields.get("messages") as Y.Array<Message>;
-    if (list.length >= MAX_MESSAGES) invalid(`thread ${shown(id)} holds ${MAX_MESSAGES} messages and takes no more`);
     const message = this.message(text, given.mentions, who);
     list.push([copy(message)]);
     return message;
