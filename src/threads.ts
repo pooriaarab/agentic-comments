@@ -467,7 +467,7 @@ export class Comments {
   }
 
   /**
-   * Remove one message. The last message of a thread stays: delete the thread instead. Replicas that delete
+   * Remove one message, also from a resolved thread. The last message of a thread stays: delete the thread instead. Replicas that delete
    * two messages at once can leave a thread with none. A moderator can still delete that thread.
    */
   deleteMessage(threadId: string, messageId: string, actor: Actor): { threadId: string; messageId: string } {
@@ -511,9 +511,9 @@ export class Comments {
     return { name: person as string, match: (a) => a.name === person && (moderator || a.kind === who.kind) };
   }
 
-  /** The raw stored messages and status record, for the code that must see data a read hides. */
-  private stored(): { id: string; fields: Fields; list: Y.Array<unknown> }[] {
-    return [...this.map.entries()].flatMap(([id, fields]) => (fields instanceof Y.Map && fields.get("messages") instanceof Y.Array ? [{ id, fields, list: fields.get("messages") as Y.Array<unknown> }] : []));
+  /** The raw stored threads, for the code that must see data a read hides. `list` is missing when the message field is bad. */
+  private stored(): { id: string; fields: Fields; list?: Y.Array<unknown> }[] {
+    return [...this.map.entries()].flatMap(([id, fields]) => (fields instanceof Y.Map ? [{ id, fields, list: fields.get("messages") instanceof Y.Array ? (fields.get("messages") as Y.Array<unknown>) : undefined }] : []));
   }
 
   /**
@@ -548,7 +548,7 @@ export class Comments {
       return author !== undefined && match(author);
     };
     for (const { fields, list } of this.stored()) {
-      for (const raw of list.toArray() as ({ author?: unknown; editedBy?: unknown } | null)[]) if (named(raw?.author) || named(raw?.editedBy)) found++;
+      for (const raw of (list?.toArray() ?? []) as ({ author?: unknown; editedBy?: unknown } | null)[]) if (named(raw?.author) || named(raw?.editedBy)) found++;
       if (named((fields.get("state") as { by?: unknown } | undefined)?.by)) found++;
     }
     return { person: name, exportedAt: this.time(), threads, edits, unread: Math.max(0, found - shownCount - edits.length) };
@@ -568,7 +568,7 @@ export class Comments {
     const out = { messages: 0, statuses: 0, edits: 0 };
     this.ydoc.transact(() => {
       for (const { fields, list } of this.stored()) {
-        const entries = list.toArray();
+        const entries = list?.toArray() ?? [];
         for (let i = entries.length - 1; i >= 0; i--) {
           const raw = entries[i] as Record<string, unknown> | null;
           if (typeof raw !== "object" || raw === null) continue;
@@ -585,8 +585,8 @@ export class Comments {
             out.edits++;
           }
           if (!next) continue;
-          list.delete(i, 1);
-          list.insert(i, [next as unknown as Message]);
+          list!.delete(i, 1);
+          list!.insert(i, [next as unknown as Message]);
         }
         const state = fields.get("state") as { status?: unknown; by?: unknown; at?: unknown } | undefined;
         const by = readAuthor(state?.by);

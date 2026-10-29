@@ -209,6 +209,13 @@ export class Notifications {
           // An edit or an erase removes a message and stores it again in one change. That is not a new message.
           const replaced = new Set<unknown>();
           for (const item of changes.deleted) for (const raw of item.content.getContent()) replaced.add((raw as { id?: unknown } | null)?.id);
+          // Replicas that edit one message at once leave two copies of its id. That is an edit too.
+          const seen = new Set<unknown>();
+          for (const raw of (event.target as Y.Array<unknown>).toArray()) {
+            const id = (raw as { id?: unknown } | null)?.id;
+            if (seen.has(id)) replaced.add(id);
+            seen.add(id);
+          }
           for (const item of changes.added) for (const raw of item.content.getContent()) if (!replaced.has((raw as { id?: unknown } | null)?.id)) ids.add((raw as { id?: unknown } | null)?.id);
           this.messagesAdded(String(path[0]), ids, source);
         }

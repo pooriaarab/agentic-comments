@@ -63,7 +63,7 @@ normal sync, and every replica sees the same threads.
 - `comments.exportPerson(name, actor)` returns the messages a person wrote, the status change of theirs that
   stands, and their edits to other people's messages. It holds no one else's words. `unread` counts stored
   entries with their name that the read cannot show (a bad message, an unreadable thread). When it is not 0,
-  the export is not complete. `suggestions.exportPerson` lists their suggestions and decisions.
+  the export is not complete. `suggestions.exportPerson` lists their suggestions and decisions, with its own `unread` count.
 - `comments.erasePerson(name, actor)` replaces each message of that person with a tombstone: the body is
   `[erased]`, the author name is `erased`, and mentions go. The author kind stays, so machine-made work stays
   marked. The thread keeps its shape, order, and times. It works on the stored entries, so it also reaches a bad
@@ -401,7 +401,7 @@ const stop = notifications.subscribe(async (event) => {
   can delete it. A reply made on another replica at the same time as `deleteThread` is lost with the thread.
 - After you merge replicas, run `exportPerson`. When `unread` is not 0, a copy that the merge hid or a bad entry
   still holds the person's name: run `erasePerson` again. An entry whose author is not valid cannot be tied to
-  a person, so export and erase skip it. An edit or an erase makes no notification event.
+  a person, so export and erase skip it. An edit or an erase makes no notification event, also when two replicas edit one message at once. A delete works on a resolved thread, and an edit does not.
 - Yjs drops the old text of a deleted or replaced message only when the document has garbage collection on
   (the default). A copy that you saved before an erase or delete still holds it.
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,

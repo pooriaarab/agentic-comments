@@ -240,14 +240,26 @@ export class Suggestions {
     return { id, fields: this.map.get(id) as Fields };
   }
 
-  /** The suggestions a person wrote, and the decisions they made, in this document. A person may export their own data. */
-  exportPerson(person: string, actor: Actor): { authored: Suggestion[]; decided: { id: string; status: "accepted" | "rejected"; at: string }[] } {
+  /**
+   * The suggestions a person wrote, and the decisions they made, in this document. `unread` counts stored
+   * suggestions and decision records with their name that this export cannot show: a suggestion that cannot
+   * be read, a decision that lost a merge, a refused decision, or a decision with no suggestion. When it is not
+   * 0 the export is not complete. A person may export their own data.
+   */
+  exportPerson(person: string, actor: Actor): { authored: Suggestion[]; decided: { id: string; status: "accepted" | "rejected"; at: string }[]; unread: number } {
     const { match } = this.comments.checkPerson(person, actor);
     const all = this.list();
-    return {
-      authored: all.filter((s) => match(s.author)),
-      decided: all.flatMap((s) => (s.decidedBy && s.decidedAt && s.status !== "pending" && match(s.decidedBy) ? [{ id: s.id, status: s.status, at: s.decidedAt }] : [])),
-    };
+    const authored = all.filter((s) => match(s.author));
+    const decided = all.flatMap((s) => (s.decidedBy && s.decidedAt && s.status !== "pending" && match(s.decidedBy) ? [{ id: s.id, status: s.status as "accepted" | "rejected", at: s.decidedAt }] : []));
+    let found = 0;
+    for (const fields of this.map.values()) if (fields instanceof Y.Map && this.named(fields.get("author"), match)) found++;
+    for (const map of [this.applied, this.rejected]) for (const raw of map.values()) if (this.named((raw as { by?: unknown } | null)?.by, match)) found++;
+    return { authored, decided, unread: Math.max(0, found - authored.length - decided.length) };
+  }
+
+  private named(value: unknown, match: (author: Author) => boolean): boolean {
+    const author = readAuthor(value);
+    return author !== undefined && match(author);
   }
 
   /**
@@ -271,8 +283,8 @@ export class Suggestions {
         for (const [key, raw] of [...map.entries()]) {
           const by = readAuthor((raw as { by?: unknown } | null)?.by);
           const author = authors.get(key.slice(0, key.lastIndexOf(":")));
-          if (!by || !author || !(match(by) || match(author))) continue;
-          if (decidesOwn(author, by)) map.delete(key);
+          if (!by || !(match(by) || (author && match(author)))) continue;
+          if (author && decidesOwn(author, by)) map.delete(key);
           else if (match(by)) {
             map.set(key, { ...(raw as object), by: { kind: by.kind, name: ERASED_NAME } });
             out.decisions++;

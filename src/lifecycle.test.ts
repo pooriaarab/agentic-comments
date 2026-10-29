@@ -407,3 +407,48 @@ describe("second review findings", () => {
     expect(ca.get(t.id).messages.map((m) => m.body)).toEqual(["one", "two, edited"]);
   });
 });
+
+describe("third review findings", () => {
+  const host: SuggestionHost = { apply: () => ({}), idempotent: true };
+
+  test("a decision is erased and exported even when its suggestion cannot be read or is missing", () => {
+    const doc = new Y.Doc();
+    const s = new Suggestions(make(doc), host);
+    const one = s.add({ anchor: cell, change: { value: 1 } }, bob);
+    s.reject(one.id, ada);
+    (doc.getMap("comments.suggestions").get(one.id) as Y.Map<unknown>).set("author", { kind: "nope" });
+    doc.getMap("comments.suggestion-applied").set("ghost:5", { by: { kind: "human", name: "ada" }, at: "2026-01-01T00:00:00.000Z" });
+    expect(s.exportPerson("ada", ada).unread).toBe(2);
+    expect(s.erasePerson("ada", ada)).toEqual({ suggestions: 0, decisions: 2 });
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc)).toString("latin1")).not.toContain('"ada"');
+    expect(s.exportPerson("ada", ada).unread).toBe(0);
+  });
+
+  test("a thread with a bad message list still has its status record erased", () => {
+    const doc = new Y.Doc();
+    const c = make(doc);
+    const t = c.add({ anchor: cell, body: "bob wrote" }, bob);
+    c.resolve(t.id, ada);
+    (doc.getMap("comments.threads").get(t.id) as Y.Map<unknown>).set("messages", "broken");
+    expect(c.exportPerson("ada", ada).unread).toBe(1);
+    expect(c.erasePerson("ada", ada)).toMatchObject({ statuses: 1 });
+  });
+
+  test("concurrent edits of one message make no event on a replica that had the original", () => {
+    const a = new Y.Doc();
+    const b = new Y.Doc();
+    const ca = make(a);
+    const t = ca.add({ anchor: cell, body: "start" }, ada);
+    const r = ca.reply(t.id, { body: "reply" }, bob);
+    sync(a, b);
+    const cb = make(b);
+    const seen: string[] = [];
+    const na = new Notifications(ca);
+    na.subscribe((e) => void seen.push(`${e.type}:${e.source}`));
+    ca.editMessage(t.id, r.id, { body: "y1 @carol" }, bob);
+    cb.editMessage(t.id, r.id, { body: "y2 @dave" }, bob);
+    sync(a, b);
+    expect(seen).toEqual([]);
+    na.close();
+  });
+});
