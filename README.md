@@ -170,6 +170,52 @@ npx agentic-comments accept <id>
   `{"value": <JSON>}`.
 - From code: `import { FileStore, CommentsService, operatorActor } from "agentic-comments/local"`.
 
+## HTTP API
+
+`agentic-comments/worker` is a Cloudflare Worker (Hono) with REST routes under `/api/v1`. It keeps each
+document in a D1 database through the `Store` port of `agentic-identity`. It checks every request with the
+`Auth` port, so the host picks who the caller is and no request carries an author.
+
+Set the principals as a secret. It is JSON from a bearer token (32 bytes or more) to `kind:name`, or to
+`{ "as": "kind:name", "scopes": [...] }`. One bad entry refuses the whole table. A request with no valid
+token gets `401`.
+
+```sh
+wrangler secret put AGENTIC_COMMENTS_TOKENS
+# {"<openssl rand -hex 32>": {"as": "human:ada", "scopes": ["comments:write"]}, "<another>": "agent_of_human:scribe"}
+```
+
+Also set `AGENTIC_COMMENTS_REGION` to `eu` or `us`. Without it every document route fails with `500 MISCONFIGURED`. Use `unknown` with
+`AGENTIC_COMMENTS_UNSAFE_REGION=1` only under `wrangler dev`. The `wrangler.jsonc` in the repo shows the D1 binding.
+
+| Scope | Allows |
+| --- | --- |
+| `comments:read` | Read documents, threads, and suggestions. |
+| `comments:comment` | Also add threads, reply, resolve, reopen, and suggest. This is the default for a token with no scopes. |
+| `comments:write` | Also create documents, relocate, and accept or reject. |
+| `comments:admin` | Also let an agent accept or reject (the `comments:accept` right). |
+
+| Route | Action |
+| --- | --- |
+| `GET /api/v1/me` | Who the token stands for. |
+| `POST /api/v1/docs` `{id, text?}` | Create a document. |
+| `GET /api/v1/docs/:doc` | Read the content text. |
+| `GET`, `POST /api/v1/docs/:doc/threads` | List (`?status=`, `?anchorState=`, `?mentioning=`) or add. |
+| `GET /api/v1/docs/:doc/threads/:id` | Read one thread. |
+| `POST /api/v1/docs/:doc/threads/:id/replies` | Reply. |
+| `POST .../threads/:id/resolve`, `reopen`, `relocate` | Change a thread. |
+| `GET`, `POST /api/v1/docs/:doc/suggestions` | List or suggest. |
+| `POST .../suggestions/:id/accept`, `reject` | Decide. An agent never decides its own suggestion. |
+
+Bodies are the same as the MCP tool inputs. An error is `{"error": {"code", "message"}}`. A body with an
+`author` key is refused with `400`.
+
+```sh
+curl -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"anchor":{"type":"text","quote":"brave"},"body":"Word choice?"}' \
+  http://127.0.0.1:8787/api/v1/docs/d1/threads
+```
+
 ## Notifications
 
 `Notifications` turns changes into events that your app can send to a notifier. It watches the data, so it
@@ -225,7 +271,7 @@ const stop = notifications.subscribe(async (event) => {
 
 ## Limits
 
-- No HTTP API yet. The file store is for one machine. It is not a sync server.
+- The file store is for one machine. It is not a sync server. The Worker keeps each document as one D1 row and refuses a document past 600,000 bytes of state.
 - `add` checks that a text anchor points into this document and matches its quote.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
 - A reply to a resolved thread is refused on the replica that sees the resolve. A reply and a

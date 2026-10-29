@@ -1,7 +1,6 @@
 import * as Y from "yjs";
 import { textAnchor, textOf, type Anchor } from "./anchor.js";
 import { CommentsError } from "./errors.js";
-import { FileStore } from "./file-store.js";
 import { localHost, TEXT_ROOT } from "./local-host.js";
 import type { Actor } from "./principal.js";
 import { Suggestions, type Suggestion } from "./suggestions.js";
@@ -14,6 +13,12 @@ export type AnchorSpec =
   | { type: "cell"; key: string }
   | { type: "slide"; elementId: string }
   | { type: "canvas"; elementId: string };
+
+/** Where a service reads and writes its document: a file store, or a document the host loaded. */
+export interface YStore {
+  read<T>(fn: (ydoc: Y.Doc) => T): T;
+  write<T>(fn: (ydoc: Y.Doc) => T): T;
+}
 
 export interface ListFilter {
   status?: string;
@@ -60,7 +65,7 @@ function anchorFrom(ydoc: Y.Doc, spec: unknown): Anchor {
  */
 export class CommentsService {
   constructor(
-    private readonly store: FileStore,
+    private readonly store: YStore,
     private readonly actor: Actor,
   ) {}
 
