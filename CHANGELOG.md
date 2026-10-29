@@ -2,6 +2,15 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.8.2
+
+Patch. No change to the SDK, the HTTP API, or the MCP tools.
+
+### Fixed
+
+- `agentic-comments-mcp --as kind:name` sets the principal, as the CLI does. It overrides `AGENTIC_COMMENTS_AS`. Before, the bin did not read `--as`, and its error said to pass it. A bare `--as` with no value, or a bad one, still fails closed with `INVALID_AUTHOR`, exit 1 from the bin. (The CLI exits 2 for a bare `--as`.) A repeated `--as`, or `--as=...`, exits 2 with a usage error.
+- `agentic-comments-mcp --help` lists `--as`.
+
 ## 0.8.0
 
 ### Added

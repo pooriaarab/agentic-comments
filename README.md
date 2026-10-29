@@ -244,7 +244,7 @@ npx agentic-comments accept <id>
   `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author,
   and a flag that does not apply to a command is refused. `AGENTIC_COMMENTS_LOCK_TIMEOUT_MS` sets the wait
   for a lock, in whole milliseconds.
-- `npx agentic-comments mcp` (or the `agentic-comments-mcp` binary, which reads the same environment) starts
+- `npx agentic-comments mcp` (or the `agentic-comments-mcp` binary, which reads the same environment and takes `--as`) starts
   the MCP server on stdio. If `AGENTIC_COMMENTS_AS` is missing, the server prints one error line that names it and exits with code 1. The operator fixes the principal and the
   scopes when the server starts. No tool takes an author or a scope. A call with any key a tool does not list is refused, so an agent
   cannot pick its own kind or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
