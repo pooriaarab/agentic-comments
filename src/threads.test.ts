@@ -793,4 +793,26 @@ describe("limits and names", () => {
       expect(code(() => comments.add({ anchor: { type: "num", x } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
     }
   });
+
+  test("a body refuses control characters, tag characters, and soft hyphens, on write and on read", () => {
+    const comments = make();
+    const bad = ["hi \u001b[2J\u001b]0;pwn\u0007", "nul\u0000", "csi\u009B31m", "a\u00ADb", "ok\u{E0069}\u{E0067}"];
+    for (const body of bad) expect(code(() => comments.add({ anchor: cell, body }, ada))).toBe("INVALID_INPUT");
+    const doc = new Y.Doc();
+    const read = make(doc);
+    const { id } = read.add({ anchor: cell, body: "real" }, ada);
+    const at = "2026-01-01T00:00:00.000Z";
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push(
+      bad.map((body, i) => ({ id: `b${i}`, at, author: { kind: "human", name: "bob" }, body, mentions: [] })),
+    );
+    expect(read.get(id).messages.map((m) => m.body)).toEqual(["real"]);
+    expect(read.get(id).skipped).toBe(bad.length);
+    expect(comments.add({ anchor: cell, body: "tab\tand\r\nnewline" }, ada).messages).toHaveLength(1);
+  });
+
+  test("a handle refuses variation selectors, which make look-alikes", () => {
+    const comments = make();
+    expect(code(() => comments.add({ anchor: cell, body: "hi", mentions: ["ad\uFE0Fa"] }, ada))).toBe("INVALID_INPUT");
+    expect(code(() => comments.add({ anchor: cell, body: "hi @ad\uFE0Fa" }, ada))).toBe("INVALID_INPUT");
+  });
 });

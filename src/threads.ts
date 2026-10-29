@@ -2,7 +2,7 @@ import * as Y from "yjs";
 import { BUILT_IN_KINDS, textOf, type Anchor, type AnchorKind } from "./anchor.js";
 import { CommentsError } from "./errors.js";
 import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
-import { ID, INVISIBLE, safeId, shown } from "./text.js";
+import { BODY_FORBIDDEN, ID, safeId, shown, VARIATION } from "./text.js";
 
 export interface Message {
   id: string;
@@ -80,8 +80,8 @@ function exact(input: unknown, allowed: string[], what: string): Record<string, 
 }
 
 function body(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "" || value.length > MAX_BODY || INVISIBLE.test(value)) {
-    invalid(`a body must be text of 1 to ${MAX_BODY} characters, with no zero-width or direction control characters`);
+  if (typeof value !== "string" || value.trim() === "" || value.length > MAX_BODY || BODY_FORBIDDEN.test(value)) {
+    invalid(`a body must be text of 1 to ${MAX_BODY} characters, with no control, invisible, or direction characters`);
   }
   return value as string;
 }
@@ -89,19 +89,21 @@ function body(value: unknown): string {
 /** Handles match without case, without leading `@`, and across Unicode forms. They are stored in this form. */
 const handle = (value: string): string => value.normalize("NFC").replace(/^@+/, "").toLowerCase().normalize("NFC");
 
-const validHandle = (value: unknown): value is string => typeof value === "string" && HANDLE.test(value) && handle(value) === value;
+const okHandle = (value: string): boolean => HANDLE.test(value) && !VARIATION.test(value);
+
+const validHandle = (value: unknown): value is string => typeof value === "string" && okHandle(value) && handle(value) === value;
 
 function mentionsOf(text: string, explicit: unknown): string[] {
   const prose = text.replace(/`[^`]*`/g, " ");
   const found = [...prose.matchAll(MENTION)].map((m) => {
     const name = m[1].replace(/[._-]+$/, "");
-    if (!HANDLE.test(handle(name))) invalid(`"@${name.slice(0, 20)}" is not a valid handle: use up to 64 characters`);
+    if (!okHandle(handle(name))) invalid(`"@${name.slice(0, 20)}" is not a valid handle: use up to 64 characters`);
     return handle(name);
   });
   let listed: string[] = [];
   if (explicit !== undefined) {
     const snapshot: unknown[] = Array.isArray(explicit) ? Array.from(explicit) : [];
-    const ok = Array.isArray(explicit) && snapshot.length <= MAX_MENTIONS && snapshot.every((m) => typeof m === "string" && HANDLE.test(handle(m)));
+    const ok = Array.isArray(explicit) && snapshot.length <= MAX_MENTIONS && snapshot.every((m) => typeof m === "string" && okHandle(handle(m)));
     if (!ok) invalid(`mentions must be a list of up to ${MAX_MENTIONS} handles of letters, digits, and . _ -`);
     listed = (snapshot as string[]).map(handle);
   }
@@ -210,7 +212,7 @@ export class Comments {
   private readMessage(raw: unknown): Message {
     const m = (raw ?? {}) as Record<string, unknown>;
     const author = readAuthor(m.author);
-    if (typeof m.id !== "string" || !ID.test(m.id) || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY || INVISIBLE.test(m.body)) {
+    if (typeof m.id !== "string" || !ID.test(m.id) || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY || BODY_FORBIDDEN.test(m.body)) {
       throw new Error("a message has no id, ISO time, valid author, or body");
     }
     if (!Array.isArray(m.mentions) || m.mentions.length > MAX_MENTIONS || !m.mentions.every(validHandle)) throw new Error("a message has bad mentions");

@@ -32,7 +32,7 @@ The CLI and MCP server are not built yet.
 
 ## Rules
 
-- Never claim an author. A write that carries an `author` key fails.
+- Never claim an author. An input that carries an `author` key at the top fails.
 - Never default an author kind. A missing kind is an error.
 - Reopen a resolved thread before you reply to it.
 - Report an error as an error. Do not retry with changed input to dodge it.
