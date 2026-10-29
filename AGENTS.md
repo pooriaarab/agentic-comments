@@ -28,6 +28,11 @@ Suggestions: `new Suggestions(comments, host)`, then `add`, `accept`, `reject`, 
 owns the change and the `apply` hook. An agent accepts only with the `comments:accept` scope, and never
 accepts or rejects its own suggestion.
 
+## Notifications
+
+`new Notifications(comments, suggestions)` then `subscribe(listener)`. Events hold ids and never text.
+The same change has the same event `id` on every replica. Check `source` before you send.
+
 ## The CLI and MCP tools
 
 `agentic-comments mcp` starts the MCP server (run it from a build until the release after 0.1.0). The operator sets the principal and scopes when it starts.
