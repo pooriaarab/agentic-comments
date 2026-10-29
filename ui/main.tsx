@@ -1,6 +1,6 @@
 // The demo page. By default it runs on an in-memory client, so it works with no token. With `#token=<bearer>` (and
 // optionally `&doc=<id>`) it talks to the Worker that serves it.
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Select, ThemeProvider, ToastProvider, TooltipProvider } from "agentic-design/react";
 import "agentic-design/styles.css";
@@ -19,6 +19,13 @@ const live = (() => {
 
 function Demo() {
   const [who, setWho] = useState("maya");
+  // After the first read the address holds only #doc=<id>. A change there shows another document.
+  const [doc, setDoc] = useState(live?.doc ?? "demo");
+  useEffect(() => {
+    const onHash = () => setDoc(new URLSearchParams(location.hash.slice(1)).get("doc") ?? "demo");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const store = useMemo(createStore, []);
   const client: PanelClient = useMemo(() => (live ? createClient({ baseUrl: location.origin, token: live.token }) : memoryClient(store, PRINCIPALS[who]!)), [store, who]);
   return (
@@ -34,7 +41,7 @@ function Demo() {
             </Select>
           </div>
         )}
-        <CommentsPanel client={client} docId={live?.doc ?? "demo"} title="Q3 report comments" />
+        <CommentsPanel client={client} docId={doc} title="Q3 report comments" />
       </main>
     </>
   );

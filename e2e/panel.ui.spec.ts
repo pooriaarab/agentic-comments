@@ -57,6 +57,27 @@ test("a decision is announced, focus moves to the list heading, and the token le
   await expect(page.getByRole("heading", { level: 2, name: /^Suggestions/ })).toBeFocused();
 });
 
+test("a write that finishes after the document changed does not paint the old document", async ({ page, request }) => {
+  const a = await seed(request);
+  const b = await seed(request);
+  await call(request, ADA, "post", `/docs/${b.doc}/threads`, { anchor: { type: "text", quote: "Headcount is 41" }, body: "Only in document B" });
+  await open(page, ADA, a.doc);
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/suggestions/*/reject", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await suggestionCard(page, "The people page says 43.").getByRole("button", { name: "Reject suggestion" }).click();
+  await page.evaluate((doc) => (location.hash = `doc=${doc}`), b.doc);
+  await expect(page.getByText("Only in document B")).toBeVisible();
+  release();
+  await page.waitForTimeout(500);
+  await expect(page.getByText("Only in document B")).toBeVisible();
+  await expect(page.getByText("Which regions drove this?")).toHaveCount(1); // document B has its own copy, so a copy of A would make 2
+  await expect(page.getByRole("status")).toHaveText("");
+});
+
 test("a person starts a thread on a quote, and a bad quote shows the error", async ({ page, request }) => {
   const { doc } = await seed(request);
   await open(page, ADA, doc);

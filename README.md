@@ -339,7 +339,7 @@ const client = createClient({ baseUrl: "https://comments.example.com", token });
 
 `client` is any object with the methods of `PanelClient`, so a host can pass its own. The panel reads who is signed
 in from `client.me()`. It follows the product rule for suggestions: an agent never gets Accept or Reject for its own
-suggestion, and an agent needs the `comments:admin` scope to decide any suggestion. A person who holds
+suggestion. Through the Worker, an agent needs the `comments:admin` scope to decide any suggestion. With a client of your own, the `comments:accept` right is enough too. A person who holds
 `comments:write` decides any suggestion. `mayDecide(me, suggestion)` is exported, so a host can use the same rule.
 A hidden button is a help and not a lock: the Worker checks every call. The panel shows an error with its code, and
 it never retries a call with other input. It needs a document whose text holds the quote, because a new thread

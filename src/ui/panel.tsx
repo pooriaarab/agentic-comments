@@ -49,6 +49,9 @@ const stamp = (iso: string) => {
   return Number.isNaN(date.getTime()) ? iso : `${when.format(date)} UTC`;
 };
 
+/** A list from a host's own client can hold anything. Keep the entries that are objects and show the rest as nothing. */
+const only = <T,>(list: unknown): T[] => (Array.isArray(list) ? list.filter((x): x is T => typeof x === "object" && x !== null) : []);
+
 function failure(error: unknown): string {
   const code = typeof (error as { code?: unknown })?.code === "string" ? `${(error as { code: string }).code}: ` : "";
   return `${code}${error instanceof Error ? error.message : String(error)}`;
@@ -232,10 +235,14 @@ function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
 }
 
 /** One bad item must not take the panel down. A host's own client can return data that the shape checks of `createClient` never saw. */
-class CardBoundary extends Component<{ children: ReactNode }, { bad: boolean }> {
-  state = { bad: false };
+class CardBoundary extends Component<{ item: unknown; children: ReactNode }, { bad: boolean; seen: unknown }> {
+  state = { bad: false, seen: this.props.item };
   static getDerivedStateFromError() {
     return { bad: true };
+  }
+  // A read gives new objects. When the item is not the one that failed, the card gets another try.
+  static getDerivedStateFromProps(props: { item: unknown }, state: { bad: boolean; seen: unknown }) {
+    return props.item === state.seen ? null : { bad: false, seen: props.item };
   }
   render() {
     return this.state.bad ? <li className="agd-comments__thread agd-comments__note">This item has bad data, so the panel does not show it.</li> : this.props.children;
@@ -270,49 +277,57 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
   const [busy, setBusy] = useState<string>();
   const [quote, setQuote] = useState("");
   const [body, setBody] = useState("");
-  const alive = useRef(true);
-  // The run that is current. A read that began before the document or client changed must not set state.
+  // The run that is current. It changes when the document or the client does, and when the panel goes away. A read or
+  // write that began in an older run must not set state, announce, or move focus: its data belongs to another document.
   const run = useRef(0);
 
-  const load = useCallback(async () => {
-    const mine = run.current;
-    const [m, t, s] = await Promise.all([client.me(), client.listThreads(docId), client.listSuggestions(docId)]);
-    if (!alive.current || mine !== run.current) return;
-    setMe(m);
-    setThreads(t);
-    setSuggestions(s);
-  }, [client, docId]);
+  const load = useCallback(
+    async (gen: number) => {
+      const [m, t, s] = await Promise.all([client.me(), client.listThreads(docId), client.listSuggestions(docId)]);
+      if (gen !== run.current) return;
+      setMe(m);
+      setThreads(only<Thread>(t));
+      setSuggestions(only<Suggestion>(s));
+    },
+    [client, docId],
+  );
 
   useEffect(() => {
-    alive.current = true;
-    run.current += 1;
+    const gen = ++run.current;
+    setMe(undefined);
     setThreads(undefined);
+    setSuggestions([]);
+    setBusy(undefined);
     setError(undefined);
     setNotice("");
-    load().catch((e) => alive.current && setError(failure(e)));
+    load(gen).catch((e) => gen === run.current && setError(failure(e)));
     return () => {
-      alive.current = false;
+      run.current += 1;
     };
   }, [load]);
 
   // Run one write, then read again. A failure shows as it is, and the panel never retries with other input.
   const act: Act = async (key, call, done, focus) => {
+    const gen = run.current;
+    const current = () => gen === run.current;
+    // The pressed button may be gone after a read, and focus would drop to the page. Put it on the heading of its list.
+    const refocus = () => focus && requestAnimationFrame(() => current() && document.getElementById(`${base}-${focus}`)?.focus());
     setBusy(key);
     setError(undefined);
     setNotice("");
     try {
       await call();
-      await load();
-      if (alive.current) {
+      await load(gen);
+      if (current()) {
         if (done) setNotice(done);
-        // The pressed button may be gone now, and focus would drop to the page. Put it on the heading of its list.
-        if (focus) requestAnimationFrame(() => document.getElementById(`${base}-${focus}`)?.focus());
+        refocus();
       }
     } catch (e) {
-      if (alive.current) setError(failure(e));
-      await load().catch(() => undefined); // show what the server holds now. The error stays.
+      if (current()) setError(failure(e));
+      await load(gen).catch(() => undefined); // show what the server holds now. The error stays.
+      if (current()) refocus();
     } finally {
-      if (alive.current) setBusy(undefined);
+      if (current()) setBusy(undefined);
     }
   };
 
@@ -373,7 +388,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
           ) : (
             <ul className="agd-comments__list">
               {shown.map((t) => (
-                <CardBoundary key={t.id}>
+                <CardBoundary key={t.id} item={t}>
                   <ThreadCard thread={t} />
                 </CardBoundary>
               ))}
@@ -386,7 +401,7 @@ export function CommentsPanel({ client, docId, title = "Comments", newThread = t
           ) : (
             <ul className="agd-comments__list">
               {[...pending, ...decided].map((s) => (
-                <CardBoundary key={s.id}>
+                <CardBoundary key={s.id} item={s}>
                   <SuggestionCard suggestion={s} />
                 </CardBoundary>
               ))}
