@@ -2,6 +2,25 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.3.0
+
+### Added
+
+- An HTTP API as a Cloudflare Worker, in the `agentic-comments/worker` export. Routes under `/api/v1` cover
+  documents, threads, replies, resolve, reopen, relocate, and suggestions with accept and reject. Documents
+  live in D1 through the `Store` port of `agentic-identity`. Callers come from its `Auth` port: a token table
+  in `AGENTIC_COMMENTS_TOKENS` by default, or any `Auth` you pass to `createApp`. A request with no valid
+  token gets `401`. The host stamps the author, and a body with an `author` key fails with `400`. An agent
+  needs the `comments:admin` scope to accept or reject, and never decides its own suggestion. The Worker
+  needs `AGENTIC_COMMENTS_REGION`; without it every document route fails with `500 MISCONFIGURED`.
+- The error codes `NO_DOCUMENT`, `DOCUMENT_EXISTS`, `CONFLICT`, and `MISCONFIGURED`.
+- `hono` and `agentic-identity` are now dependencies of the package.
+
+### Fixed
+
+- `agentic-comments-mcp --help` prints help and exits 0. It also answers `--version`. Before, both ended in an
+  `INVALID_AUTHOR` error and exit 1.
+
 ## 0.2.0
 
 ### Added
