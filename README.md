@@ -76,6 +76,8 @@ normal sync, and every replica sees the same threads.
 - Every replica of a document must register the same custom anchor kinds.
 - A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
+- The first visible message decides when a thread started, so a peer that inserts an older message at
+  the front moves the thread in `list()`.
 - A read scans every stored entry. A peer that writes millions of junk entries slows every read.
 - A body mentions anyone named as `@handle`. Put `@` text in backticks to avoid that. A scoped
   package name such as `@scope/pkg` is not a mention.

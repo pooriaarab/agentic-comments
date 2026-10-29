@@ -116,6 +116,15 @@ const validDate = (value: unknown): value is string => typeof value === "string"
 /** A copy that shares nothing with the original, so a caller cannot change what Yjs holds. */
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+/** Like `copy`, but refuses what JSON would quietly change: `undefined`, NaN, and Infinity. */
+const strictCopy = <T>(value: T): T =>
+  JSON.parse(
+    JSON.stringify(value, (key, v: unknown) => {
+      if (v === undefined || (typeof v === "number" && !Number.isFinite(v))) throw new Error(`"${key}" is not valid JSON data`);
+      return v;
+    }),
+  ) as T;
+
 /** Comment threads on a Yjs document. Replies and status merge across replicas. */
 export class Comments {
   private readonly kinds = new Map<string, AnchorKind>();
@@ -154,7 +163,7 @@ export class Comments {
     const kind = typeof raw === "object" && raw !== null && !Array.isArray(raw) && typeof type === "string" ? this.kinds.get(type) : undefined;
     if (!kind) throw new CommentsError("INVALID_ANCHOR", `an anchor needs a type: ${[...this.kinds.keys()].join(", ")}`);
     try {
-      const parsed = copy(kind.parse(copy(raw) as Record<string, unknown>));
+      const parsed = copy(kind.parse(strictCopy(raw) as Record<string, unknown>));
       if (JSON.stringify(parsed).length > MAX_ANCHOR) throw new Error(`an anchor holds up to ${MAX_ANCHOR} characters of JSON`);
       if (parsed?.type !== kind.type) throw new Error(`the "${kind.type}" kind must return an anchor of its own type`);
       return parsed as Anchor;
@@ -201,7 +210,7 @@ export class Comments {
   private readMessage(raw: unknown): Message {
     const m = (raw ?? {}) as Record<string, unknown>;
     const author = readAuthor(m.author);
-    if (typeof m.id !== "string" || !ID.test(m.id) || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY) {
+    if (typeof m.id !== "string" || !ID.test(m.id) || !validDate(m.at) || !author || typeof m.body !== "string" || m.body.trim() === "" || m.body.length > MAX_BODY || INVISIBLE.test(m.body)) {
       throw new Error("a message has no id, ISO time, valid author, or body");
     }
     if (!Array.isArray(m.mentions) || m.mentions.length > MAX_MENTIONS || !m.mentions.every(validHandle)) throw new Error("a message has bad mentions");
@@ -253,6 +262,9 @@ export class Comments {
     const who = assertActor(actor);
     const given = exact(input, ["anchor", "body", "mentions"], "a new thread");
     const anchor = this.parseAnchor(given.anchor);
+    if (JSON.stringify(this.parseAnchor(anchor)) !== JSON.stringify(anchor)) {
+      throw new CommentsError("INVALID_ANCHOR", "an anchor kind must parse its own output to the same anchor");
+    }
     this.checkInDocument(anchor);
     const first = this.message(body(given.body), given.mentions, who);
     const id = globalThis.crypto.randomUUID();

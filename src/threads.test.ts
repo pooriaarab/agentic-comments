@@ -762,4 +762,35 @@ describe("limits and names", () => {
     const body = "run npm i @types/node and `@bob` then see @scope/pkg";
     expect(comments.add({ anchor: cell, body }, ada).messages[0].mentions).toEqual([]);
   });
+
+  test("a stored body with a direction control or a zero-width character is skipped and reported", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "real" }, ada);
+    const at = "2026-01-01T00:00:00.000Z";
+    (doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>).push([
+      { id: "x1", at, author: { kind: "human", name: "bob" }, body: "approve \u202Eevil", mentions: [] },
+      { id: "x2", at, author: { kind: "human", name: "bob" }, body: "a\u200Bb", mentions: [] },
+    ]);
+    expect(comments.get(id).messages.map((m) => m.body)).toEqual(["real"]);
+    expect(comments.get(id).skipped).toBe(2);
+  });
+
+  test("a custom kind that changes its own output is refused before any write", () => {
+    let calls = 0;
+    const flaky = { type: "flaky", parse: () => ({ type: "flaky", n: calls++ }) };
+    const doc = new Y.Doc();
+    const comments = new Comments(doc, { now: clock, anchors: [flaky] });
+    expect(code(() => comments.add({ anchor: { type: "flaky" } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    expect(comments.list()).toEqual([]);
+    expect(comments.problems()).toEqual([]);
+  });
+
+  test("a custom kind never sees NaN or undefined turned into something else", () => {
+    const num = { type: "num", parse: (raw: Record<string, unknown>) => ({ type: "num", x: raw.x as number }) };
+    const comments = new Comments(new Y.Doc(), { now: clock, anchors: [num] });
+    for (const x of [Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      expect(code(() => comments.add({ anchor: { type: "num", x } as never, body: "x" }, ada))).toBe("INVALID_ANCHOR");
+    }
+  });
 });
