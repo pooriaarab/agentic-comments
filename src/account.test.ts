@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { createMemoryStore } from "agentic-identity";
 import { commentsAccount, type CommentsAccountDocument } from "./account.js";
 import { CommentsDocs } from "./worker.js";
-import { Comments, CommentsError, MODERATE_SCOPE, stamp, Suggestions, ERASED_NAME, type Anchor, type SuggestionHost } from "./index.js";
+import { Comments, CommentsError, MODERATE_SCOPE, stamp, Suggestions, ERASED_BODY, ERASED_NAME, type Anchor, type SuggestionHost } from "./index.js";
 
 // Ways this can fail, written before the code:
 //  1. Export holds another person's words, or misses a kind (message, status, edit, suggestion, decision).
@@ -85,7 +85,7 @@ describe("commentsAccount", () => {
     expect(await code(() => commentsAccount.exportAccount(ada, { actor: ada } as never))).toBe("INVALID_INPUT");
     expect(await code(() => commentsAccount.eraseAccount(ada, { documents: {}, actor: ada } as never))).toBe("INVALID_INPUT");
     expect(await code(() => commentsAccount.exportAccount({ kind: "human", name: " ada" }, { documents: [], actor: ada }))).toBe("INVALID_INPUT");
-    expect(await code(() => commentsAccount.eraseAccount(ada, { documents: [], actor: ada, creators: {} as never }))).toBe("INVALID_INPUT");
+    expect(await code(() => commentsAccount.eraseAccount(ada, { documents: [], actor: ada, worker: {} as never }))).toBe("INVALID_INPUT");
     const bare = { id: "n", comments: { ydoc: undefined, exportPerson() {}, erasePerson() {} }, suggestions: { comments: { ydoc: undefined }, exportPerson() {}, erasePerson() {} } };
     expect(await code(() => commentsAccount.exportAccount(ada, { documents: [bare as never], actor: ada }))).toBe("INVALID_INPUT");
     const d = doc("same");
@@ -117,19 +117,38 @@ describe("commentsAccount", () => {
     expect(plain.cause).toBeInstanceOf(Error);
   });
 
-  test("the worker keeps the creator of a document: export lists it, erase tombstones it, and a repeat finds none", async () => {
+  test("a worker host: export and erase reach the threads and the creator of every stored document", async () => {
     const store = createMemoryStore({ region: "unknown" });
     const docs = new CommentsDocs(store);
     await docs.create("mine", "abc", ada);
     await docs.create("theirs", "abc", bob);
-    const deps = { documents: [], actor: ada, creators: docs };
-    expect((await commentsAccount.exportAccount(ada, deps)).documents).toMatchObject([{ documentId: "mine" }]);
-    expect((await commentsAccount.eraseAccount(ada, deps)).documents).toBe(1);
+    await docs.write("theirs", ada, (service) => service.comment({ anchor: cell, body: "ada on bob doc" }));
+    await docs.write("theirs", bob, (service) => service.comment({ anchor: { type: "cell", key: "B2" }, body: "bob own" }));
+    const deps = { documents: [], actor: ada, worker: docs };
+    const out = await commentsAccount.exportAccount(ada, deps);
+    expect(out.documents).toMatchObject([{ documentId: "mine" }]);
+    expect(out.messages).toMatchObject([{ documentId: "theirs", body: "ada on bob doc" }]);
+    expect(JSON.stringify(out)).not.toContain("bob own");
+    expect(await commentsAccount.eraseAccount(ada, deps)).toMatchObject({ messages: 1, documents: 1 });
     expect((await store.get("comments_docs", "mine"))?.createdBy).toEqual({ kind: "human", name: ERASED_NAME });
     expect((await store.get("comments_docs", "theirs"))?.createdBy).toEqual({ kind: "human", name: "bob" });
-    expect((await commentsAccount.eraseAccount(ada, deps)).documents).toBe(0);
-    expect((await commentsAccount.exportAccount(ada, deps)).documents).toEqual([]);
+    const after = await commentsAccount.exportAccount(ada, deps);
+    expect([after.messages, after.documents]).toEqual([[], []]);
+    expect(await commentsAccount.eraseAccount(ada, deps)).toEqual({ messages: 0, statuses: 0, edits: 0, suggestions: 0, decisions: 0, documents: 0 });
+    const left = await docs.read("theirs", bob, (service) => service.threads().flatMap((t) => t.messages.map((m) => m.body)));
+    expect(left).toEqual([ERASED_BODY, "bob own"]);
     await docs.write("mine", ada, (service) => service.threads());
     expect((await store.get("comments_docs", "mine"))?.createdBy).toEqual({ kind: "human", name: ERASED_NAME });
+  });
+
+  test("a damaged stored document stops the erase with a code and leaves the others", async () => {
+    const store = createMemoryStore({ region: "unknown" });
+    const docs = new CommentsDocs(store);
+    await docs.create("ok", "abc", ada);
+    await store.put("comments_docs", "bad", { state: "!!", createdBy: { kind: "human", name: "ada" }, createdAt: 1 });
+    const failure = await commentsAccount.eraseAccount(ada, { documents: [], actor: ada, worker: docs }).catch((e) => e);
+    expect(failure).toBeInstanceOf(CommentsError);
+    expect(failure.code).toBe("CORRUPT");
+    expect((await store.get("comments_docs", "ok"))?.createdBy).toEqual({ kind: "human", name: "ada" });
   });
 });

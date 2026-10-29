@@ -4,11 +4,12 @@ import { requirePrincipal, type RequirePrincipalOptions } from "agentic-identity
 import { D1_SCHEMA, createD1Store, type D1Like } from "agentic-identity/cloudflare";
 import * as Y from "yjs";
 import { CommentsError, type CommentsErrorCode } from "./errors.js";
-import { ACCEPT_SCOPE } from "./suggestions.js";
+import { ACCEPT_SCOPE, Suggestions } from "./suggestions.js";
+import type { CommentsAccountDocument } from "./account.js";
 import { ERASED_NAME, readAuthor, stamp, type Actor, type Author } from "./principal.js";
-import { MODERATE_SCOPE } from "./threads.js";
+import { Comments, MODERATE_SCOPE } from "./threads.js";
 import { CommentsService } from "./service.js";
-import { TEXT_ROOT } from "./local-host.js";
+import { localHost, TEXT_ROOT } from "./local-host.js";
 import { exact, invalid } from "./validate.js";
 
 export interface WorkerEnv {
@@ -189,12 +190,52 @@ export class CommentsDocs {
     });
   }
 
+  private async ids(): Promise<string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
+      for (const { id } of page.items) ids.push(id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
+  }
+
+  /**
+   * For the account plug-in: runs `fn` on each stored document, with its `Comments` and `Suggestions`. With `save`,
+   * each document runs in one transaction and the state `fn` changed is written back there, so a throw leaves it as it was.
+   * A damaged document stops the run with CORRUPT.
+   */
+  async eachAccountDocument(fn: (doc: CommentsAccountDocument) => void, save: boolean): Promise<void> {
+    const open = (id: string, row: { state?: unknown } | null) => {
+      const ydoc = this.load(row, id);
+      ydoc.getText(TEXT_ROOT);
+      const comments = new Comments(ydoc);
+      return { ydoc, doc: { id, comments, suggestions: new Suggestions(comments, localHost) } };
+    };
+    for (const id of await this.ids()) {
+      if (!save) {
+        const { doc } = open(id, await this.store.get(DOCS, id));
+        fn(doc);
+        continue;
+      }
+      await this.store.transaction(async (tx) => {
+        const row = (await tx.get(DOCS, id)) as { state?: unknown; createdBy?: unknown; createdAt?: unknown } | null;
+        const { ydoc, doc } = open(id, row);
+        fn(doc);
+        const state = Y.encodeStateAsUpdate(ydoc);
+        if (state.length > MAX_STATE) throw new CommentsError("STORE_FULL", `document "${id}" would pass ${MAX_STATE} bytes of state`);
+        await tx.put(DOCS, id, { state: toBase64(state), createdBy: (row?.createdBy ?? null) as never, createdAt: (row?.createdAt ?? null) as never });
+      });
+    }
+  }
+
   private async scan(author: Author, each: (id: string, row: { state?: unknown; createdBy?: unknown; createdAt?: unknown }) => Promise<void>): Promise<void> {
     let cursor: string | undefined;
     do {
       const page = await this.store.query(DOCS, { limit: 100, ...(cursor ? { cursor } : {}) });
       for (const { id, data } of page.items) {
-        const by = readAuthor((data as { createdBy?: unknown }).createdBy);
+        const by = readAuthor((data as { createdBy?: unknown } | null)?.createdBy);
         if (by && by.kind === author.kind && by.name === author.name) await each(id, data as never);
       }
       cursor = page.nextCursor;

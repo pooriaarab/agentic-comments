@@ -6,7 +6,7 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ### Added
 
-- `agentic-comments/account` exports `commentsAccount`, the account plug-in. `exportAccount(subject, deps)` returns the messages, status changes, edits, suggestions, and decisions of one subject over the documents the host passes, as JSON records. `eraseAccount(subject, deps)` tombstones them and returns counts. A second erase counts 0. The package keeps no grants or audit rows. The creator that the HTTP worker keeps on each document row is covered when the host passes `creators` (the worker's `CommentsDocs`).
+- `agentic-comments/account` exports `commentsAccount`, the account plug-in. `exportAccount(subject, deps)` returns the messages, status changes, edits, suggestions, and decisions of one subject over the documents the host passes, as JSON records. `eraseAccount(subject, deps)` tombstones them and returns counts. A second erase counts 0. The package keeps no grants or audit rows. A host that runs the HTTP worker passes `worker` (the worker's `CommentsDocs`) to cover every stored document and the creator kept on each row.
 
 ## 0.7.0
 

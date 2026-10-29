@@ -93,12 +93,13 @@ without reading the storage layout. Pass the subject (`{ kind, name }`) and `{ d
 document is `{ id, comments, suggestions }`. The actor is made with `stamp()` and must name the subject.
 `exportAccount` returns JSON records in `messages`, `statusChanges`, `edits`, `suggestions`, `decisions`, and
 `documents`, and `unread`. `eraseAccount` tombstones the same data as `erasePerson` and returns counts. A second erase counts 0.
-The package keeps no grants or audit rows. Its one owner-like record is the creator that the HTTP worker keeps
-on each document row. Pass `creators: docs` (the `CommentsDocs` of the worker) so export lists those documents
-under `documents` and erase gives the creator the tombstone name. Without it, that creator stays. A run covers
-only the subject's own kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions of the
-subject inside other people's messages are neither exported nor erased. Records can name other people, such as
-the moderator in `editedBy` or the person in `decidedBy`. A record in `unread` means the export is not
+The package keeps no grants or audit rows. A host that runs the HTTP worker passes `worker: docs` (the
+`CommentsDocs` of the worker). Then the run also covers every stored document: the subject's messages and
+suggestions in it, and the creator that the worker keeps on each row, listed under `documents` and given the
+tombstone name on erase. Each stored document is erased in one transaction. Without `worker`, that data stays.
+A run covers only the subject's own kind: `human:ada` does not reach `agent_of_human:ada`. Names and mentions
+of the subject inside other people's messages are neither exported nor erased. Records can name other people,
+such as the moderator in `editedBy` or the person in `decidedBy`. A record in `unread` means the export is not
 complete: the store holds entries of the subject that a read cannot show. A missing `documents` list is an
 error, not an empty run. Erase goes document by document. If one fails, the error names it, the earlier
 documents stay erased, and a repeat counts only what is left. The counts of a failed run are lost.
