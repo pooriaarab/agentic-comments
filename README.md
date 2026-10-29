@@ -51,6 +51,16 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Author kinds
+
+| Kind | Meaning | Label |
+| --- | --- | --- |
+| `human` | A person signed in. | person |
+| `user_token` | A person, through a token an agent holds. | person via agent |
+| `agent_of_human` | An agent that acts for a person. | agent |
+| `agent_of_agent` | An agent that acts for another agent. | agent |
+| `agent` | An agent with its own identity. | agent |
+
 ## Limits
 
 - No suggestions yet. No file store, CLI, MCP server, or HTTP API yet.
@@ -61,9 +71,11 @@ normal sync, and every replica sees the same threads.
   resolve made at once on two replicas both stay. The merged thread is resolved and holds the reply.
 - Author and kind are only as trustworthy as every peer that can write the document. A peer can write
   any author straight into the Yjs data. The sync layer must decide who may write.
-- A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows up to 2,000.
+- A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows the first
+  2,000 valid messages. `skipped` and `problems()` report the rest.
 - Every replica of a document must register the same custom anchor kinds.
-- Mentions are stored in lowercase, with no leading `@`.
+- Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
+  and `. _ -`. A longer handle in a body is refused.
 
 ## Develop
 

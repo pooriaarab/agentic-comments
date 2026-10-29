@@ -105,13 +105,18 @@ export function textOf(type: Y.Text | Y.XmlText): string {
 
 /** Pin a range of a Yjs text. Later edits by any replica do not move the anchor off its text. */
 export function textAnchor(type: Y.Text | Y.XmlText, from: number, to: number): TextAnchor {
-  const value = textOf(type);
-  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to <= from || to > value.length) {
-    bad(`the range ${from}..${to} is not inside the text, which has ${value.length} characters`);
+  try {
+    const value = textOf(type);
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to <= from || to > value.length) {
+      bad(`the range ${from}..${to} is not inside the text, which has ${value.length} characters`);
+    }
+    return parseText({
+      text: value.slice(from, to),
+      start: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(type, from, 0)),
+      end: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(type, to, -1)),
+    });
+  } catch (error) {
+    if (error instanceof CommentsError) throw error;
+    throw new CommentsError("INVALID_ANCHOR", `the text cannot be anchored: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return parseText({
-    text: value.slice(from, to),
-    start: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(type, from, 0)),
-    end: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(type, to, -1)),
-  });
 }

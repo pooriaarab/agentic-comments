@@ -14,8 +14,8 @@ Threads live on a Yjs document. Replicas merge them without a server.
 
 `import { Comments, stamp, textAnchor } from "agentic-comments"`.
 
-- `stamp({ kind, name })` makes the author. The host calls it for the principal it
-  authenticated. You never pass an author in an input.
+- `stamp({ kind, name })` makes the author. Only the host calls it, for the principal it
+  authenticated. An agent never calls it, and nobody passes an author in an input.
 - `new Comments(ydoc)` reads and writes the threads on that document.
 - `add`, `reply`, `resolve`, `reopen`, `get`, `list`, `problems`.
 

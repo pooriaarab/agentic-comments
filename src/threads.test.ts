@@ -15,9 +15,6 @@ import { Actor, authorLabel, Comments, CommentsError, PRINCIPAL_KINDS, stamp, te
 // 10. A write the library accepts cannot be read back, so a reply is lost without an error.
 // 11. A value changes between the check and the write, or a caller edits what it got back.
 // 12. A thread grows past a limit, or a peer fills it with junk, and replies stop.
-// 10. A write the library accepts cannot be read back, so a reply is lost without an error.
-// 11. A value changes between the check and the write, or a caller edits what it got back.
-// 12. A thread grows past a limit, or a peer fills it with junk, and replies stop.
 
 const ada = stamp({ kind: "human", name: "ada" });
 const bot = stamp({ kind: "agent_of_human", name: "scribe" });
@@ -583,7 +580,31 @@ describe("limits and names", () => {
     const list = doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
     list.push(Array.from({ length: 2_000 }, (_, i) => ({ id: `m${i}`, at: ISO, author: { kind: "human", name: "eve" }, body: "x", mentions: [] })));
     expect(comments.get(id).messages).toHaveLength(2_000);
+    expect(comments.get(id).skipped).toBe(1);
     expect(comments.problems().length).toBeGreaterThan(0);
+  });
+
+  test("junk in front of or behind a thread does not hide its messages or a new reply", () => {
+    const doc = new Y.Doc();
+    const comments = make(doc);
+    const { id } = comments.add({ anchor: cell, body: "real" }, ada);
+    const list = doc.getMap<Y.Map<unknown>>("comments.threads").get(id)!.get("messages") as Y.Array<unknown>;
+    list.insert(0, Array.from({ length: 2_100 }, () => ({ junk: 1 })));
+    list.push(Array.from({ length: 2_100 }, () => ({ junk: 1 })));
+    expect(comments.get(id).messages.map((m) => m.body)).toEqual(["real"]);
+    const reply = comments.reply(id, { body: "seen" }, bot);
+    expect(comments.get(id).messages.map((m) => m.id)).toContain(reply.id);
+  });
+
+  test("a mention with a combining mark is kept, and a too long handle is refused instead of cut", () => {
+    const comments = make();
+    expect(comments.add({ anchor: cell, body: "ask @İrem" }, ada).messages[0].mentions).toEqual(["i\u0307rem"]);
+    expect(code(() => comments.add({ anchor: cell, body: "@" + "a".repeat(80) }, ada))).toBe("INVALID_INPUT");
+    expect(comments.list()).toHaveLength(1);
+  });
+
+  test("a text anchor on a detached text is a CommentsError", () => {
+    expect(code(() => textAnchor(new Y.Text(), 0, 1))).toBe("INVALID_ANCHOR");
   });
 
   test("explicit mentions follow the handle grammar", () => {

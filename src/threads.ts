@@ -55,13 +55,13 @@ export interface ThreadFilter {
 const THREADS = "comments.threads";
 const MAX_BODY = 10_000;
 const MAX_MENTIONS = 50;
-/** A local reply stops here. Replicas that reply at once can go past it, so a read shows up to twice as many. */
+/** A local reply stops here. Replicas that reply at once can go past it. A read shows the first READ_LIMIT valid messages and reports the rest. */
 const MAX_MESSAGES = 1_000;
 const READ_LIMIT = 2 * MAX_MESSAGES;
 const MAX_ANCHOR = 4_096;
 const STATUSES = ["open", "resolved"];
-const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}_.-]{0,62}[\p{L}\p{N}])?$/u;
-const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}_.-]{0,63})/gu;
+const HANDLE = /^[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}_.-]{0,62}[\p{L}\p{N}\p{M}])?$/u;
+const MENTION = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*)/gu;
 
 type Fields = Y.Map<unknown>;
 
@@ -87,7 +87,11 @@ const handle = (value: string): string => value.replace(/^@+/, "").toLowerCase()
 const validHandle = (value: unknown): value is string => typeof value === "string" && HANDLE.test(value) && handle(value) === value;
 
 function mentionsOf(text: string, explicit: unknown): string[] {
-  const found = [...text.matchAll(MENTION)].map((m) => handle(m[1].replace(/[._-]+$/, "")));
+  const found = [...text.matchAll(MENTION)].map((m) => {
+    const name = m[1].replace(/[._-]+$/, "");
+    if (!HANDLE.test(handle(name))) invalid(`"@${name.slice(0, 20)}" is not a valid handle: use up to 64 characters`);
+    return handle(name);
+  });
   let listed: string[] = [];
   if (explicit !== undefined) {
     const snapshot: unknown[] = Array.isArray(explicit) ? Array.from(explicit) : [];
@@ -210,21 +214,23 @@ export class Comments {
       if (!(list instanceof Y.Array)) throw new Error("the thread has no message list");
       const messages: Message[] = [];
       const issues: string[] = [];
-      const raw = list.toArray().slice(0, READ_LIMIT);
-      if (list.length > READ_LIMIT) issues.push(`${list.length - READ_LIMIT} messages past the read limit are not shown`);
+      const raw = list.toArray();
       const counts = new Map<unknown, number>();
       for (const m of raw) counts.set((m as { id?: unknown } | null)?.id, (counts.get((m as { id?: unknown } | null)?.id) ?? 0) + 1);
+      let past = 0;
       raw.forEach((entry, index) => {
         try {
           const message = this.readMessage(entry);
           if (counts.get(message.id)! > 1) throw new Error("a message id repeats");
-          messages.push(message);
+          if (messages.length >= READ_LIMIT) past++;
+          else messages.push(message);
         } catch (error) {
           issues.push(`message ${index} skipped: ${(error as Error).message}`);
         }
       });
+      if (past > 0) issues.push(`${past} valid messages past the read limit are not shown`);
       if (messages.length === 0) throw new Error("the thread has no valid message");
-      const thread: Thread = { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: issues.filter((i) => i.startsWith("message ")).length };
+      const thread: Thread = { id, anchor: this.parseAnchor(fields.get("anchor")), status: state.status as Thread["status"], statusBy: by, statusAt: state.at, messages, skipped: raw.length - messages.length };
       return { thread, issues };
     } catch (error) {
       throw new CommentsError("CORRUPT", `thread ${shown(id)} is malformed: ${error instanceof Error ? error.message : String(error)}`);
