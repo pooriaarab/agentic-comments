@@ -13,7 +13,8 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ### Changed
 
-- The `agentic-identity` dependency is `^0.8.0`.
+- The `agentic-identity` dependency is `^0.8.0`, the current release. Below 1.0, `^0.8.0` does not accept 0.7.x, so a host that pins `agentic-identity@0.7.x` gets a second copy of it. The exported names are the same in both releases.
+- `zod` is not part of the public API. Its move from zod 3 to 4 changes no exported type.
 
 ## 0.6.0
 
