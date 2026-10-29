@@ -166,6 +166,8 @@ describe("edit, delete, export, and erase", () => {
     const edited = await call(ADA, "PATCH", path(mine), { body: "ada fixed" });
     expect([edited.status, edited.json.body, edited.json.editedBy]).toEqual([200, "ada fixed", { kind: "human", name: "ada" }]);
     expect((await call(SEER, "PATCH", path(mine), { body: "x" })).status).toBe(403);
+    expect((await call(SEER, "DELETE", path(reply.id))).status).toBe(403);
+    expect((await call(SEER, "DELETE", `/docs/d1/threads/${made.id}`)).status).toBe(403);
     expect((await call(ADA, "DELETE", path(reply.id))).json.error.code).toBe("FORBIDDEN");
     expect((await call(ADA, "DELETE", path("nope"))).json.error.code).toBe("NO_MESSAGE");
     expect((await call(BOSS, "DELETE", path(reply.id))).json).toEqual({ threadId: made.id, messageId: reply.id });

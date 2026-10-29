@@ -137,7 +137,7 @@ const isString = (v: unknown) => typeof v === "string";
 // One thread in an export. It reads SHAPES.message at call time, so it can sit above SHAPES.
 const personThread = (v: unknown) =>
   isObject(v) && isString(v.threadId) && isObject(v.anchor) && Array.isArray(v.messages) && v.messages.every(SHAPES.message) &&
-  (v.statusChange === undefined || isObject(v.statusChange));
+  (v.statusChange === undefined || (isObject(v.statusChange) && (v.statusChange.status === "open" || v.statusChange.status === "resolved") && isString(v.statusChange.at) && isObject(v.statusChange.by)));
 const SHAPES: Record<Shape, (v: unknown) => boolean> = {
   me: (v) => isObject(v) && (typeof v.kind === "string" && Object.hasOwn(KINDS, v.kind)) && isString(v.name) && Array.isArray(v.scopes),
   created: (v) => isObject(v) && isString(v.id),
