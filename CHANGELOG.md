@@ -11,14 +11,14 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
   A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters. A name such as `ada@example.com` is refused.
   One bad token or name refuses the whole token table, and every `/api/v1` request then gets `401`. The CLI and the MCP server
   refuse a principal name outside this grammar. Check your tokens and names before you upgrade.
-- **Breaking:** the `Authorization` header is checked before your `Auth` runs. A header that is not `Bearer` followed by a token
-  of the shape above gets `401`. This applies to a custom `Auth` too, so a JWT, which contains `.`, is refused.
-- **Breaking:** a write (`POST`, `PUT`, `PATCH`, `DELETE`) that your `Auth` accepts with no `Authorization` header gets `403`,
-  unless its `Origin` is listed in the new `origins` option of `createApp`. The default lists no origins. A host that signs
-  writes with a session cookie must pass `origins`. Before, the Worker did not check the origin.
+- **Breaking:** the `Authorization` header is checked before your `Auth` runs. A header that is not `Bearer` followed by
+  1 to 512 bytes of A-Z a-z 0-9 `_` `-` gets `401`. This applies to a custom `Auth` too, so a JWT, which contains `.`, is refused.
+- **Breaking:** a write (any method except `GET`, `HEAD`, and `OPTIONS`) that your `Auth` accepts with no `Authorization`
+  header gets `403`, unless its `Origin` is listed in the new `origins` option of `createApp`. The default lists no origins.
+  A host that signs writes with a session cookie must pass `origins`. Before, the Worker did not check the origin.
+- **Breaking:** a custom `Auth` that throws now returns `503`, not `500`, with the code `INTERNAL`. Alerts keyed on `500` must change.
 - The auth and principal code now uses `agentic-identity` 0.6. The Worker resolves the caller with `requirePrincipal` from
   `agentic-identity/http`. The token table and the operator principal both go through `parsePrincipal`.
-- A custom `Auth` that throws returns a `5xx` status with the API error shape and the code `INTERNAL`.
 
 ### Removed
 

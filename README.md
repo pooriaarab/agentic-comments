@@ -201,7 +201,7 @@ Set the principals as a secret. It is JSON from a bearer token to `kind:name`, o
 `{ "as": "kind:name", "scopes": [...] }`. A token is 32 to 512 bytes, from A-Z a-z 0-9 `_` `-`, so a base64 token with `+` or `/` is refused.
 A name starts with A-Z a-z 0-9 `_` `-`, then uses A-Z a-z 0-9 `.` `_` `-`, and is at most 128 characters.
 One bad entry refuses the whole table. A request with no valid token gets `401`.
-A request whose `Authorization` header is not `Bearer` plus a token of that shape gets `401`, before any custom `Auth` runs.
+A request whose `Authorization` header is not `Bearer` followed by 1 to 512 bytes of A-Z a-z 0-9 `_` `-` gets `401`, before any custom `Auth` runs.
 A write with no `Authorization` header (a session cookie, for example) gets `403` unless its `Origin` is in the `origins`
 option of `createApp`. The default lists none.
 
