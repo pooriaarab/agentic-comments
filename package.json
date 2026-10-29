@@ -10,7 +10,8 @@
     "annotations",
     "collaboration",
     "agents",
-    "yjs"
+    "yjs",
+    "mcp"
   ],
   "license": "MIT",
   "author": "Pooria Arab",
@@ -35,6 +36,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./local": {
+      "types": "./dist/local.d.ts",
+      "import": "./dist/local.js"
     }
   },
   "scripts": {
@@ -45,12 +50,19 @@
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
-    "yjs": "^13.6.0"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "yjs": "^13.6.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
+  },
+  "mcpName": "io.github.pooriaarab/agentic-comments",
+  "bin": {
+    "agentic-comments": "./dist/cli.js",
+    "agentic-comments-mcp": "./dist/mcp-bin.js"
   }
 }

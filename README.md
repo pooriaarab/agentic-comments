@@ -6,8 +6,8 @@
 
 Comment threads and suggestions anchored to any content, from people and agents.
 
-> Status: early. Threads, suggestions, and anchor survival work. It is not on npm yet. The CLI, the MCP
-> server, and notifications come next.
+> Status: early. Threads, suggestions, anchor survival, a CLI, and an MCP server work. It is not on npm
+> yet. Notifications come next.
 
 ## Install
 
@@ -125,6 +125,37 @@ suggestions.accept(s.id, ada);
   record is, and it can win settle, so every replica undoes the real edit. The sync layer must decide who
   may write.
 
+## CLI and MCP server
+
+Both run on a local store: one file that holds a Yjs document. The text is in the `text` root, and
+non-text values are in the `values` map. A write takes a lock file and saves with a rename, so parallel
+processes lose nothing. A lock left by a dead process is cleared.
+
+```sh
+export AGENTIC_COMMENTS_FILE=./comments.ydoc
+export AGENTIC_COMMENTS_AS=human:ada          # kind:name. The operator sets this.
+npx agentic-comments init --text "Hello brave world"
+npx agentic-comments comment --text-quote brave --body "Word choice? @scribe"
+npx agentic-comments list --status open
+AGENTIC_COMMENTS_AS=agent_of_human:scribe npx agentic-comments suggest --text-quote brave --replace bold
+npx agentic-comments accept <id>
+```
+
+- Commands: `init`, `list`, `show`, `comment`, `reply`, `resolve`, `reopen`, `relocate`, `suggestions`,
+  `suggest`, `accept`, `reject`, `mcp`. Run `agentic-comments --help` for flags.
+- Every result is JSON. An error is JSON on stderr with a `code`, and the exit code is 1. A usage error
+  exits 2.
+- The principal comes from `--as` or `AGENTIC_COMMENTS_AS`. Scopes come only from
+  `AGENTIC_COMMENTS_SCOPES`, a comma list such as `comments:accept`. No flag takes a scope or an author.
+- `npx agentic-comments mcp` starts the MCP server on stdio. The operator fixes the principal and the
+  scopes when the server starts. No tool takes an author or a scope, so an agent cannot pick its own kind
+  or rights. Tools: `list_threads`, `get_thread`, `add_comment`, `reply_to_thread`, `resolve_thread`,
+  `reopen_thread`, `relocate_thread`, `list_suggestions`, `suggest_change`, `accept_suggestion`,
+  `reject_suggestion`.
+- A text change is `{"replace": "new text"}`. A change for a cell, slide, or canvas anchor is
+  `{"value": <JSON>}`.
+- From code: `import { FileStore, CommentsService, operatorActor } from "agentic-comments/local"`.
+
 ## Author kinds
 
 | Kind | Meaning | Label |
@@ -137,7 +168,7 @@ suggestions.accept(s.id, ada);
 
 ## Limits
 
-- No file store, CLI, MCP server, or HTTP API yet.
+- No HTTP API yet. The file store is for one machine. It is not a sync server.
 - `add` checks that a text anchor points into this document and matches its quote.
 - The library trusts the host to call `stamp()` only for a principal it authenticated.
 - A reply to a resolved thread is refused on the replica that sees the resolve. A reply and a
@@ -148,6 +179,9 @@ suggestions.accept(s.id, ada);
   on every read, so keep it fast.
 - A local reply stops at 1,000 messages. Replicas that reply at once can pass that. A read shows the first
   2,000 valid messages. `skipped` and `problems()` report the rest.
+- The CLI trusts its caller: a process that can set `AGENTIC_COMMENTS_AS` and `AGENTIC_COMMENTS_SCOPES` can
+  act as anyone. Give an agent the MCP server, where the operator fixes both. Do not give it a shell with
+  the store file and the CLI.
 - Every replica of a document must register the same custom anchor kinds.
 - A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
