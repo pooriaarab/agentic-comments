@@ -53,6 +53,34 @@ normal sync, and every replica sees the same threads.
 - A malformed thread from a bad replica is skipped. A bad message is left out, and `skipped` on the
   thread counts those. `problems()` names them.
 
+## Edit, delete, export, and erase
+
+- `comments.editMessage(threadId, messageId, { body, mentions? }, actor)` changes a body. The id, author,
+  time, and place stay. The message gets `editedAt` and `editedBy`. A resolved thread refuses an edit.
+- `comments.deleteMessage(threadId, messageId, actor)` removes one message. The last message of a thread
+  stays: delete the thread instead.
+- `comments.deleteThread(threadId, actor)` removes a thread. Its author can do it while every message is theirs.
+- `comments.exportPerson(name, actor)` returns the messages a person wrote, the status change of theirs that
+  stands, and their edits to other people's messages. It holds no one else's words. `unread` counts stored
+  entries with their name that the read cannot show (a bad message, an unreadable thread). When it is not 0,
+  the export is not complete. `suggestions.exportPerson` lists their suggestions and decisions, with its own `unread` count.
+- `comments.erasePerson(name, actor)` replaces each message of that person with a tombstone: the body is
+  `[erased]`, the author name is `erased`, and mentions go. The author kind stays, so machine-made work stays
+  marked. The thread keeps its shape, order, and times. It works on the stored entries, so it also reaches a bad
+  message, a message past the read limit, and a copy that a merge hid. A status change of theirs and their name
+  as an editor get the tombstone name. `suggestions.erasePerson` does the same for their suggestions
+  (it drops the summary, and the change of a pending or rejected one, which can then no longer be accepted)
+  and their decisions. No principal can have the name `erased`.
+
+Only the author can edit or delete a message, and a person can export or erase their own data: the same kind
+and name. A principal with the `comments:moderate` scope (`MODERATE_SCOPE`) can do it for anyone, and an
+export or erase by a moderator covers every kind with that name. The host gives that scope to an owner or
+admin. An edit made by a moderator records the moderator in `editedBy`. Nobody but a moderator can delete an
+erased message or a thread that holds one.
+
+Replicas that edit one message at once leave a copy each. When the copies agree on the author kind and time,
+the read keeps the erased copy, or else the latest edit. An edit and a delete made at once keep the edit.
+
 ## Anchors for plain text
 
 `agentic-comments/anchor` pins a range of a plain string. It needs no Yjs and no framework.
@@ -361,7 +389,7 @@ const stop = notifications.subscribe(async (event) => {
 - Events come from the data and not from the calls, so a status change that two replicas make at once gives
   each replica its own event, and a thread that arrives whole gives events for its current state only.
 - Every replica of a document must register the same custom anchor kinds.
-- A repeated message id hides every copy. A peer that appends a copy of a thread's only message makes
+- A repeated message id hides every copy, unless every copy is an edit: then the read keeps one. A peer that appends a copy of a thread's only message makes
   the thread unreadable.
 - The quoted text of a text anchor is not checked when a thread is read. A peer can store any text there.
   `textAnchor` refuses a quote whose JSON form passes 4,096 characters. Quotes with many newlines or
@@ -372,6 +400,14 @@ const stop = notifications.subscribe(async (event) => {
 - A body mentions anyone named as `@handle`. Put `@` text in backticks to avoid that. Any two backticks in a body pair up, so a loose backtick
   can hide a real mention that sits between two of them. A scoped
   package name such as `@scope/pkg` is not a mention.
+- Erase does not touch a name that another person typed in their own message.
+- Replicas that delete two messages of one thread at once can leave a thread with no message. Only a moderator
+  can delete it. A reply made on another replica at the same time as `deleteThread` is lost with the thread.
+- After you merge replicas, run `exportPerson`. When `unread` is not 0, a copy that the merge hid or a bad entry
+  still holds the person's name: run `erasePerson` again. An entry whose author is not valid cannot be tied to
+  a person, so export and erase skip it. An edit or an erase makes no notification event, also when two replicas edit one message at once. A delete works on a resolved thread, and an edit does not.
+- Yjs drops the old text of a deleted or replaced message only when the document has garbage collection on
+  (the default). A copy that you saved before an erase or delete still holds it.
 - Mentions are stored in lowercase, with no leading `@`. A handle holds up to 64 letters, digits, marks,
   and `. _ -`. A longer handle in a body is refused.
 

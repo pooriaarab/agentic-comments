@@ -1,7 +1,7 @@
 import * as Y from "yjs";
 import type { Anchor, AnchorState } from "./anchor.js";
 import { CommentsError } from "./errors.js";
-import { assertActor, readAuthor, type Actor, type Author } from "./principal.js";
+import { assertActor, ERASED_NAME, readAuthor, type Actor, type Author } from "./principal.js";
 import { BODY_FORBIDDEN, ID, safeId, safeText, shown } from "./text.js";
 import type { Comments } from "./threads.js";
 import { copy, exact, invalid, strictCopy, validDate } from "./validate.js";
@@ -101,7 +101,7 @@ interface Decision {
  * Someone who is not a signed-in person decides their own work when the names match, whatever the
  * kinds. A token counts here, because an agent holds it. A signed-in person may decide their own.
  */
-const decidesOwn = (author: Author, decider: Author): boolean => author.kind !== "human" && decider.kind !== "human" && author.name === decider.name;
+const decidesOwn = (author: Author, decider: Author): boolean => author.name !== ERASED_NAME && author.kind !== "human" && decider.kind !== "human" && author.name === decider.name;
 
 /** A client id in its one canonical form: whole digits, no sign, no leading zero, within 32 bits. */
 const clientOf = (text: string): number | undefined => (/^(0|[1-9]\d{0,9})$/.test(text) && Number(text) <= 0xffffffff ? Number(text) : undefined);
@@ -240,6 +240,69 @@ export class Suggestions {
     return { id, fields: this.map.get(id) as Fields };
   }
 
+  /**
+   * The suggestions a person wrote, and the decisions they made, in this document. `unread` counts stored
+   * suggestions and decision records with their name that this export cannot show: a suggestion that cannot
+   * be read, a decision that lost a merge, a refused decision, or a decision with no suggestion. When it is not
+   * 0 the export is not complete. A person may export their own data.
+   */
+  exportPerson(person: string, actor: Actor): { authored: Suggestion[]; decided: { id: string; status: "accepted" | "rejected"; at: string }[]; unread: number } {
+    const { match } = this.comments.checkPerson(person, actor);
+    const all = this.list();
+    const authored = all.filter((s) => match(s.author));
+    const decided = all.flatMap((s) => (s.decidedBy && s.decidedAt && s.status !== "pending" && match(s.decidedBy) ? [{ id: s.id, status: s.status as "accepted" | "rejected", at: s.decidedAt }] : []));
+    let found = 0;
+    for (const fields of this.map.values()) if (fields instanceof Y.Map && this.named(fields.get("author"), match)) found++;
+    for (const map of [this.applied, this.rejected]) for (const raw of map.values()) if (this.named((raw as { by?: unknown } | null)?.by, match)) found++;
+    return { authored, decided, unread: Math.max(0, found - authored.length - decided.length) };
+  }
+
+  private named(value: unknown, match: (author: Author) => boolean): boolean {
+    const author = readAuthor(value);
+    return author !== undefined && match(author);
+  }
+
+  /**
+   * Give every suggestion a person wrote a tombstone author and drop its summary. An accepted one keeps its
+   * change, because that change is already part of the content. A pending or rejected one loses its change, and
+   * can no longer be accepted. A decision they made gets a tombstone decider. A decision that a read refuses (a
+   * principal that decided its own work) is deleted, so erase never turns it into a valid one. Returns how many
+   * suggestions and decisions it changed.
+   */
+  erasePerson(person: string, actor: Actor): { suggestions: number; decisions: number } {
+    const { match } = this.comments.checkPerson(person, actor);
+    const out = { suggestions: 0, decisions: 0 };
+    const authors = new Map<string, Author>();
+    for (const [id, fields] of this.map.entries()) {
+      const author = fields instanceof Y.Map ? readAuthor(fields.get("author")) : undefined;
+      if (author) authors.set(id, author);
+    }
+    const status = new Map(this.list().map((s) => [s.id, s.status]));
+    this.ydoc.transact(() => {
+      for (const map of [this.applied, this.rejected]) {
+        for (const [key, raw] of [...map.entries()]) {
+          const by = readAuthor((raw as { by?: unknown } | null)?.by);
+          const author = authors.get(key.slice(0, key.lastIndexOf(":")));
+          if (!by || !(match(by) || (author && match(author)))) continue;
+          if (author && decidesOwn(author, by)) map.delete(key);
+          else if (match(by)) {
+            map.set(key, { ...(raw as object), by: { kind: by.kind, name: ERASED_NAME } });
+            out.decisions++;
+          }
+        }
+      }
+      for (const [id, author] of authors) {
+        if (!match(author)) continue;
+        const fields = this.map.get(id) as Fields;
+        fields.set("author", { kind: author.kind, name: ERASED_NAME });
+        fields.delete("summary");
+        if (status.get(id) !== "accepted") fields.set("change", null);
+        out.suggestions++;
+      }
+    });
+    return out;
+  }
+
   /** Propose a change. Anyone can suggest. The host stamps the author. */
   add(input: NewSuggestion, actor: Actor): Suggestion {
     const who = assertActor(actor);
@@ -268,6 +331,7 @@ export class Suggestions {
   private mayDecide(who: Actor, s: Suggestion, verb: string): void {
     const ok = !decidesOwn(s.author, who) && (who.kind === "human" || who.scopes.includes(ACCEPT_SCOPE));
     if (!ok) throw new CommentsError("FORBIDDEN", `${who.kind}:${shown(who.name)} cannot ${verb} this suggestion: a signed-in person, or a principal with the ${ACCEPT_SCOPE} scope that did not write it, can`);
+    if (verb === "accept" && s.author.name === ERASED_NAME && s.status !== "accepted") throw new CommentsError("FORBIDDEN", "an erased suggestion has no change left and cannot be accepted");
   }
 
   /**

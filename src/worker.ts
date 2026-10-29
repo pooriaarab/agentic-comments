@@ -190,6 +190,7 @@ const STATUS: Partial<Record<CommentsErrorCode, number>> = {
   INVALID_INPUT: 400,
   INVALID_ANCHOR: 400,
   NO_THREAD: 404,
+  NO_MESSAGE: 404,
   NO_SUGGESTION: 404,
   NO_DOCUMENT: 404,
   THREAD_RESOLVED: 409,
