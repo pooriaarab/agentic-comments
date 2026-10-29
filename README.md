@@ -243,6 +243,34 @@ curl -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
   http://127.0.0.1:8787/api/v1/docs/d1/threads
 ```
 
+## HTTP client
+
+`agentic-comments/client` is a typed client for the Worker routes. It uses only `fetch`, so it runs in browsers,
+Workers, and Node.
+
+```ts
+import { createClient, CommentsApiError } from "agentic-comments/client";
+
+const comments = createClient({ baseUrl: "https://comments.example.com", token });
+await comments.createDocument({ id: "d1", text: "The quick brown fox" });
+const thread = await comments.addThread("d1", { anchor: { type: "text", quote: "fox" }, body: "Which fox?" });
+await comments.reply("d1", thread.id, { body: "This one." });
+try {
+  await comments.accept("d1", "missing");
+} catch (error) {
+  if (error instanceof CommentsApiError) console.error(error.code, error.status);
+}
+```
+
+- The methods match the routes: `me`, `createDocument`, `getDocument`, `listThreads`, `getThread`, `addThread`, `reply`,
+  `resolve`, `reopen`, `relocate`, `listSuggestions`, `suggest`, `accept`, `reject`. Each takes an optional `{ signal }`.
+- `baseUrl` is the Worker URL, `http` or `https`, with no query, hash, or credentials.
+- The client never sends an author. The Worker stamps one from the token.
+- A failed call throws `CommentsApiError`. `code` is the API error code, or `UNKNOWN` when the reply is not an API
+  error. `status` is the HTTP status. A `200` reply with the wrong shape also fails as `UNKNOWN`.
+- The client never follows a redirect and never retries. A write that you abort after the client sends it can still apply:
+  read the thread before you try again.
+
 ## Live demo
 
 A demo Worker runs at <https://agentic-comments-demo.hello-fd1.workers.dev>. It is a staging site. Check it with

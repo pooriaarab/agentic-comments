@@ -2,6 +2,15 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.5.0
+
+### Added
+
+- `agentic-comments/client`: a typed fetch client for every Worker route under `/api/v1`. `createClient({ baseUrl, token })`
+  returns methods for documents, threads, replies, resolve, reopen, relocate, and suggestions. It never sends an author.
+  A failed call throws `CommentsApiError` with the API `code` and the HTTP `status`. It uses only `fetch`, so it runs in
+  browsers, Workers, and Node.
+
 ## 0.4.0
 
 ### Added
