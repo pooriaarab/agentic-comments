@@ -2,6 +2,14 @@
 
 Versions follow semantic versioning. Before 1.0, a minor release can change the API.
 
+## 0.8.7
+
+Patch. No change to the SDK, the HTTP API, or the MCP tools.
+
+### Changed
+
+- The `agentic-design` and `agentic-identity` dependency ranges keep their lower bounds and accept releases below 1.0.0. CI tests identity 0.12.0 and design 0.10.1.
+
 ## 0.8.6
 
 Patch. No change to the SDK, the HTTP API, or the MCP tools.
