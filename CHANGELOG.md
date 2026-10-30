@@ -8,7 +8,11 @@ Patch. No change to the SDK, the HTTP API, or the MCP tools.
 
 ### Changed
 
-- The `agentic-identity` range is `>=0.9.0 <0.11.0`, and the `agentic-design` range is `>=0.8.0 <0.10.0`. They were `^0.9.0` and `^0.8.0`. The wider ranges let hosts install current releases together. No code change was needed.
+- The `agentic-identity` range is `>=0.9.0 <0.11.0`, and the `agentic-design` range is `>=0.8.0 <0.10.0`. They were `^0.9.0` and `^0.8.0`. The wider ranges let hosts install identity 0.10 and design 0.9 together. No code change was needed.
+
+### Fixed
+
+- The MCP registry metadata now points to 0.8.5. It remained at 0.8.3 for the 0.8.4 release.
 
 ## 0.8.4
 
