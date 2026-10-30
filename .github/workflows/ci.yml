@@ -20,6 +20,17 @@ jobs:
       - run: npm ci
         env:
           WRANGLER_SEND_METRICS: "false"
+      - name: Check current test versions match the lockfile
+        run: |
+          node -e '
+            const packages = require("./package-lock.json").packages;
+            for (const name of ["agentic-design", "agentic-identity"]) {
+              if (packages[`node_modules/${name}`].version !== packages[`node_modules/${name}-current`].version) {
+                throw new Error(`${name} test version differs from the runtime lockfile`);
+              }
+            }
+          '
+      - run: npm ls agentic-design agentic-identity
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
