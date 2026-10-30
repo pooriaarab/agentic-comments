@@ -20,6 +20,11 @@ jobs:
       - run: npm ci
         env:
           WRANGLER_SEND_METRICS: "false"
+      - name: Install current test versions
+        run: |
+          npm install --no-save \
+            "$(node -p "require('./package.json').devDependencies['agentic-design-current'].replace(/^npm:/, '')")" \
+            "$(node -p "require('./package.json').devDependencies['agentic-identity-current'].replace(/^npm:/, '')")"
       - run: npm run build
       - run: npm run typecheck
       - run: npm test

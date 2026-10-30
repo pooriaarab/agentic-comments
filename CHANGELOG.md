@@ -8,7 +8,7 @@ Patch. No change to the SDK, the HTTP API, or the MCP tools.
 
 ### Changed
 
-- The `agentic-design` dependency range accepts 0.10.x while retaining support for 0.8.0 and later. Development aliases pin the current design and identity releases for testing.
+- The `agentic-design` dependency range accepts 0.10.x, and the `agentic-identity` range accepts 0.11.x. The lower bounds remain 0.8.0 and 0.9.0. CI tests the current releases as well as the lower bounds.
 
 ## 0.8.5
 
