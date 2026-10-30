@@ -4,9 +4,11 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ## 0.8.6
 
+Patch. No change to the SDK, the HTTP API, or the MCP tools.
+
 ### Changed
 
-- The `agentic-design` dependency range accepts 0.10.x while retaining support for 0.8.0 and later.
+- The `agentic-design` dependency range accepts 0.10.x while retaining support for 0.8.0 and later. Development aliases pin the current design and identity releases for testing.
 
 ## 0.8.5
 

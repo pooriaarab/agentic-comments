@@ -111,8 +111,8 @@
     "vitest": "^3.0.0",
     "wrangler": "^4.155.0",
     "yjs": "^13.6.0",
-    "agentic-design": "0.10.0",
-    "agentic-identity": "0.10.0"
+    "agentic-design-current": "npm:agentic-design@0.10.0",
+    "agentic-identity-current": "npm:agentic-identity@0.10.0"
   },
   "peerDependenciesMeta": {
     "react": {
