@@ -29,3 +29,18 @@ jobs:
       - run: npm run test:ui
         env:
           WRANGLER_SEND_METRICS: "false"
+
+  lower-bounds:
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false agentic-identity@0.9.0 agentic-design@0.8.0
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test

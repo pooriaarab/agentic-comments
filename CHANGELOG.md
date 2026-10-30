@@ -4,9 +4,11 @@ Versions follow semantic versioning. Before 1.0, a minor release can change the 
 
 ## 0.8.5
 
+Patch. No change to the SDK, the HTTP API, or the MCP tools.
+
 ### Changed
 
-- Accept `agentic-identity` 0.9 and 0.10, and `agentic-design` 0.8 and 0.9, so hosts can install current releases together.
+- The `agentic-identity` range is `>=0.9.0 <0.11.0`, and the `agentic-design` range is `>=0.8.0 <0.10.0`. They were `^0.9.0` and `^0.8.0`. The wider ranges let hosts install current releases together. No code change was needed.
 
 ## 0.8.4
 
